@@ -1,6 +1,9 @@
 {
   "name": "CarePath",
-  "description": "Mobile-first healthcare recovery application converting hospital discharge instructions into an evidence-linked recovery plan.",
+  "description": "CarePath — Mobile-First Healthcare Recovery Companion Built on AWS. Converts hospital discharge instructions into an evidence-linked recovery plan.",
+  "category": "Healthcare",
+  "event": "AWS Student Hackathon",
+  "awsServices": ["Amazon S3", "Amazon Textract", "Amazon Bedrock", "Amazon DynamoDB", "Amazon SNS"],
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

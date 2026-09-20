@@ -84,6 +84,8 @@ CarePath is an evidence-grounded post-operative recovery companion that transfor
 - `.env.example`: Template documenting local development flags and optional AWS production variables.
 - `server/extraction/localExtractionService.ts`: Local Textract-compatible OCR/parsing service preserving 5-page boundaries.
 - `server/ai/clinicalAIService.ts`: `ClinicalAIService` interface with `LocalClinicalAIProvider` and `BedrockClinicalAIProvider`.
+- `server/ai/recoveryOutputSchema.ts`: Strips markdown fences from model output and validates it against `BedrockRecoveryOutput`.
+- `server/ai/deterministicExtractor.ts`: Section-aware offline parser for uploaded documents (only emits text printed in the document).
 - `server/storage/storageService.ts`: Partitioned multi-table DynamoDB and S3 storage layer with in-memory fallback.
 - `server/notification/notificationService.ts`: LocalStack SNS publisher and Caregiver Alert Simulator with console logging.
 - `server/scripts/initLocal.ts`: TypeScript script to provision LocalStack resources.
@@ -105,7 +107,8 @@ CarePath is an evidence-grounded post-operative recovery companion that transfor
 
 ### 3. Clinical AI Service Abstraction
 - Interface: `ClinicalAIService`
-- Implements `LocalClinicalAIProvider` (deterministic fixture engine with exact clinical quotes) and `BedrockClinicalAIProvider` (invokes Claude 3.5 Sonnet on AWS Bedrock when credentials exist).
+- Implements `LocalClinicalAIProvider` (section-aware deterministic parser, with the verified demo fixture used only for `isDemo` uploads) and `BedrockClinicalAIProvider` (invokes Claude 3.5 Sonnet v2 on Amazon Bedrock when `BEDROCK_MODE=aws` and credentials exist, validating the JSON and falling back to the deterministic parser on failure).
+- Every citation is checked against its source page and marked `VERIFIED` or `UNVERIFIED`; unverified quotes are shown with a warning, never silently replaced.
 - Enforces strict zero-diagnosis rules: no invented dosages, no unsolicited medical opinions.
 
 ### 4. Database Layer (DynamoDB Local / LocalStack)
@@ -164,11 +167,11 @@ Access the application in your browser at: `http://localhost:3000`
      "status": "ok",
      "environment": "local",
      "services": {
-       "s3": "connected" (or "demo_fallback"),
-       "dynamodb": "connected" (or "demo_fallback"),
-       "sns": "connected" (or "demo_fallback"),
-       "clinicalAI": "fixture",
-       "extraction": "local"
+       "s3": "connected" (or "local_storage", "aws"),
+       "dynamodb": "connected" (or "local_database", "aws"),
+       "sns": "connected" (or "local_notifications"),
+       "clinicalAI": "deterministic_nlp_fixture" (or "bedrock_claude_active", "local_gemini_fallback"),
+       "extraction": "local_pdf_parse" (or "amazon_textract")
      }
    }
    ```
