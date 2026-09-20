@@ -28,18 +28,22 @@ export const MoreTab: React.FC<MoreTabProps> = ({
   onOpenUpload,
   onResetDemo,
 }) => {
+  // Call buttons only appear for numbers printed in the patient's paperwork
+  const helplineDigits = patient.hospitalHelpline?.replace(/[^0-9+]/g, '');
+  const emergencyDigits = patient.emergencyContact?.phone?.replace(/[^0-9+]/g, '');
+
   return (
     <div id="more-tab-view" className="space-y-4 pb-20 pt-1 px-4 sm:px-5 animate-fade-in">
       {/* Header */}
       <div className="pt-2">
-        {/* Fictional Demo Data Banner */}
+        {/* Dynamic Patient & Facility Context Banner */}
         <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl px-3 py-1.5 mb-2 flex items-center justify-between text-[11px] text-amber-900 shadow-2xs">
-          <div className="flex items-center gap-1.5 font-bold">
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
-            <span>Demo patient · Fictional data</span>
+          <div className="flex items-center gap-1.5 font-bold truncate max-w-[200px]">
+            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+            <span className="truncate">{patient.isDemo ? 'Demo patient · Fictional data' : 'Active Patient'}</span>
           </div>
-          <span className="text-[10px] font-mono text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-md">
-            Apex Memorial
+          <span className="text-[10px] font-mono text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-md truncate max-w-[170px]">
+            {patient.hospitalName || 'Clinical Record'}
           </span>
         </div>
 
@@ -57,15 +61,20 @@ export const MoreTab: React.FC<MoreTabProps> = ({
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
             Recovery Summary
           </span>
-          <span className="text-[11px] font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-100">
-            MRN: #AMH-9921408
-          </span>
+          {patient.mrn && (
+            <span className="text-[11px] font-bold text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-full border border-teal-100">
+              MRN: {patient.mrn}
+            </span>
+          )}
         </div>
 
         <div className="space-y-2 text-xs">
           <div className="flex justify-between py-1.5 border-b border-slate-100">
             <span className="text-slate-500">Patient</span>
-            <span className="font-bold text-slate-900">{patient.name} ({patient.age} yrs)</span>
+            <span className="font-bold text-slate-900">
+              {patient.name}
+              {patient.age ? ` (${patient.age} yrs)` : ''}
+            </span>
           </div>
           <div className="flex justify-between py-1.5 border-b border-slate-100">
             <span className="text-slate-500">Procedure</span>
@@ -101,7 +110,7 @@ export const MoreTab: React.FC<MoreTabProps> = ({
               Discharge Document Record
             </div>
             <div className="text-xs text-slate-500">
-              Original 5-page clinical paper & exact page citations
+              Discharge paperwork & exact page citations
             </div>
           </div>
         </div>
@@ -118,29 +127,39 @@ export const MoreTab: React.FC<MoreTabProps> = ({
         <div className="space-y-2.5 text-xs">
           <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
             <div>
-              <div className="font-bold text-slate-900">24/7 Surgical Duty Desk</div>
-              <div className="text-slate-500">{patient.hospitalHelpline}</div>
+              <div className="font-bold text-slate-900">Hospital Helpline</div>
+              <div className="text-slate-500">{patient.hospitalHelpline || 'Not documented'}</div>
             </div>
-            <a
-              href={`tel:${patient.hospitalHelpline.replace(/[^0-9+]/g, '')}`}
-              className="px-3 py-1.5 rounded-xl bg-teal-700 text-white font-bold text-[11px]"
-            >
-              Call
-            </a>
+            {helplineDigits && (
+              <a
+                href={`tel:${helplineDigits}`}
+                className="px-3 py-1.5 rounded-xl bg-teal-700 text-white font-bold text-[11px]"
+              >
+                Call
+              </a>
+            )}
           </div>
 
-          <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
-            <div>
-              <div className="font-bold text-slate-900">Emergency Contact (Husband)</div>
-              <div className="text-slate-500">{patient.emergencyContact.name} ({patient.emergencyContact.phone})</div>
+          {patient.emergencyContact && (
+            <div className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
+              <div>
+                <div className="font-bold text-slate-900">
+                  Emergency Contact{patient.emergencyContact.relationship ? ` (${patient.emergencyContact.relationship})` : ''}
+                </div>
+                <div className="text-slate-500">
+                  {patient.emergencyContact.name} ({patient.emergencyContact.phone || 'phone not documented'})
+                </div>
+              </div>
+              {emergencyDigits && (
+                <a
+                  href={`tel:${emergencyDigits}`}
+                  className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-800 font-bold text-[11px]"
+                >
+                  Call
+                </a>
+              )}
             </div>
-            <a
-              href={`tel:${patient.emergencyContact.phone.replace(/[^0-9+]/g, '')}`}
-              className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-800 font-bold text-[11px]"
-            >
-              Call
-            </a>
-          </div>
+          )}
         </div>
       </div>
 
@@ -157,7 +176,7 @@ export const MoreTab: React.FC<MoreTabProps> = ({
           </span>
         </div>
         <p className="text-xs text-slate-600 leading-relaxed mb-3">
-          SMS alerts are automatically dispatched to the verified caregiver endpoint if check-in symptoms match any documented Page 5 warning sign.
+          SMS alerts are automatically dispatched to the verified caregiver endpoint if check-in symptoms match any documented discharge warning sign.
         </p>
         <div className="bg-slate-50 p-3 rounded-xl border border-slate-100 text-xs flex items-center justify-between">
           <span className="text-slate-500">Caregiver Phone</span>
@@ -230,7 +249,7 @@ export const MoreTab: React.FC<MoreTabProps> = ({
           className="inline-flex items-center gap-1.5 text-xs text-slate-500 hover:text-slate-800 font-medium py-2 px-3 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
         >
           <RefreshCw className="w-3.5 h-3.5" />
-          <span>Reset Demo State to Day 2 Defaults</span>
+          <span>Reset Recovery State to Defaults</span>
         </button>
       </div>
 

@@ -39,14 +39,14 @@ import {
   Smartphone,
   Check,
 } from 'lucide-react';
-import { CarePathApi } from '../services/api';
+import { CarePathApi, UNMATCHED_SYMPTOM_NOTICE } from '../services/api';
 
 interface DesktopViewProps {
   patient: PatientProfile;
   medications: MedicationTask[];
   activities: ActivityTask[];
   warningSigns: WarningSign[];
-  followUp: FollowUpAppointment;
+  followUp: FollowUpAppointment | null;
   checkInHistory: CheckInRecord[];
   selectedPlanDay: number;
   plans: DailyPlan[];
@@ -61,6 +61,8 @@ interface DesktopViewProps {
   onTriggerBreathingAlert: () => void;
   onResetDemo: () => void;
   onSwitchToMobile: () => void;
+  documentId?: string;
+  documentTitle?: string;
 }
 
 export const DesktopView: React.FC<DesktopViewProps> = ({
@@ -83,6 +85,8 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
   onTriggerBreathingAlert,
   onResetDemo,
   onSwitchToMobile,
+  documentId,
+  documentTitle,
 }) => {
   // Check-In form state inside Desktop dashboard
   const [pain, setPain] = useState<PainLevel>('same');
@@ -91,6 +95,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
   const [notes, setNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [checkInSuccess, setCheckInSuccess] = useState<string | null>(null);
+  const [symptomNotice, setSymptomNotice] = useState<string | null>(null);
 
   // Active filter for today's tasks
   const [taskFilter, setTaskFilter] = useState<'all' | 'medication' | 'activity'>('all');
@@ -101,42 +106,56 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
     activities.filter((a) => a.completed).length;
   const progressPercent = Math.round((completedTasks / (totalTasks || 1)) * 100);
 
+  const currentDay = patient?.currentDay ?? 1;
+  const isDemo = patient?.isDemo ?? false;
+  const feverWarning = warningSigns.find((w) => w.triggerKey === 'fever');
+  const breathingWarning = warningSigns.find((w) => w.triggerKey === 'breathing');
+  const painWarning = warningSigns.find((w) => w.triggerKey === 'pain_worse');
+  const primaryWarningPage =
+    warningSigns.find((w) => typeof w.sourcePage === 'number')?.sourcePage ?? 1;
+
   const handleCheckInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setSymptomNotice(null);
 
+    // Offline fallback only: when the server responds, its evaluation is authoritative
     let matchedWarning: WarningSign | null = null;
     if (breathing === 'difficult') {
-      matchedWarning = warningSigns.find((w) => w.triggerKey === 'breathing') || null;
+      matchedWarning = breathingWarning || warningSigns.find((w) => w.triggerKey === 'breathing') || null;
     } else if (fever === 'yes') {
-      matchedWarning = warningSigns.find((w) => w.triggerKey === 'fever') || null;
+      matchedWarning = feverWarning || warningSigns.find((w) => w.triggerKey === 'fever') || null;
     } else if (pain === 'worse') {
-      matchedWarning = warningSigns.find((w) => w.triggerKey === 'pain_worse') || null;
+      matchedWarning = painWarning || warningSigns.find((w) => w.triggerKey === 'pain_worse') || null;
     }
 
     try {
       const res = await CarePathApi.submitCheckIn({
-        dayNumber: 2,
+        dayNumber: currentDay,
         pain,
         fever,
         breathing,
         notes: notes.trim() || undefined,
+        documentId,
       });
 
       const rec = res.record;
-      onCheckInSubmitted(rec, matchedWarning);
+      onCheckInSubmitted(rec, rec.matchedWarningSign ?? null);
 
       if (rec.warningMatched) {
         setCheckInSuccess('Safety warning triggered — Caregiver notified via SNS.');
+        setTimeout(() => setCheckInSuccess(null), 5000);
+      } else if (rec.unmatchedSymptoms) {
+        setSymptomNotice(UNMATCHED_SYMPTOM_NOTICE);
       } else {
         setCheckInSuccess('Daily check-in recorded successfully!');
+        setTimeout(() => setCheckInSuccess(null), 5000);
       }
-      setTimeout(() => setCheckInSuccess(null), 5000);
     } catch (err) {
       const record: CheckInRecord = {
         id: `checkin-${Date.now()}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        dayNumber: 2,
+        dayNumber: currentDay,
         pain,
         fever,
         breathing,
@@ -210,7 +229,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold transition-all cursor-pointer"
             >
               <FileText className="w-3.5 h-3.5 text-slate-300" />
-              <span className="hidden md:inline">Original PDF (5 Pages)</span>
+              <span className="hidden md:inline">Original PDF</span>
             </button>
 
             {/* Upload Discharge Summary */}
@@ -256,9 +275,11 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-xl font-extrabold text-white tracking-tight">{patient.name}</h1>
-                <span className="text-xs font-mono bg-slate-700 text-slate-300 px-2 py-0.5 rounded-md">
-                  MRN: #AMH-9921408
-                </span>
+                {patient.mrn && (
+                  <span className="text-xs font-mono bg-slate-700 text-slate-300 px-2 py-0.5 rounded-md">
+                    MRN: {patient.mrn}
+                  </span>
+                )}
                 <span className="text-xs font-semibold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3" />
                   Verified Plan
@@ -274,7 +295,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
           <div className="flex items-center gap-4 bg-slate-900/80 p-2.5 rounded-2xl border border-slate-700/60 text-xs">
             <div className="px-3 border-r border-slate-800">
               <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Current Day</div>
-              <div className="text-base font-extrabold text-white">Day 2 <span className="text-slate-500 text-xs font-normal">/ 14</span></div>
+              <div className="text-base font-extrabold text-white">Day {currentDay} <span className="text-slate-500 text-xs font-normal">/ {patient.totalDays || 14}</span></div>
             </div>
             <div className="px-3 border-r border-slate-800">
               <div className="text-slate-400 text-[10px] uppercase font-bold tracking-wider">Adherence</div>
@@ -367,7 +388,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
               <div>
                 <h2 className="text-base font-extrabold text-white tracking-tight flex items-center gap-2">
-                  <span>Day 2 Recovery Tasks</span>
+                  <span>Day {currentDay} Recovery Tasks</span>
                   <span className="text-xs font-mono font-bold bg-teal-500/20 text-teal-300 px-2.5 py-0.5 rounded-full">
                     {completedTasks} of {totalTasks} Done
                   </span>
@@ -557,27 +578,37 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
                 <span className="text-[11px] uppercase font-mono tracking-wider text-teal-400 font-bold">
                   Scheduled Outpatient Clinical Follow-Up
                 </span>
-                <h3 className="text-sm font-extrabold text-white tracking-tight mt-0.5">
-                  {followUp.title}
-                </h3>
-                <div className="flex items-center gap-3 text-xs text-slate-300 mt-1">
-                  <span><strong>Date:</strong> {followUp.date} at {followUp.time}</span>
-                  <span>•</span>
-                  <span><strong>Physician:</strong> {followUp.doctor}</span>
-                </div>
-                <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
-                  <MapPin className="w-3 h-3 text-slate-400" />
-                  <span>{followUp.location}</span>
-                </div>
+                {followUp ? (
+                  <>
+                    <h3 className="text-sm font-extrabold text-white tracking-tight mt-0.5">
+                      {followUp.title}
+                    </h3>
+                    <div className="flex items-center gap-3 text-xs text-slate-300 mt-1">
+                      <span><strong>Date:</strong> {followUp.date} at {followUp.time}</span>
+                      <span>•</span>
+                      <span><strong>Physician:</strong> {followUp.doctor}</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-xs text-slate-400 mt-0.5">
+                      <MapPin className="w-3 h-3 text-slate-400" />
+                      <span>{followUp.location}</span>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-slate-400 mt-1">
+                    No follow-up appointment was found in the discharge paperwork.
+                  </p>
+                )}
               </div>
             </div>
 
-            <button
-              onClick={() => onOpenDocumentViewer(followUp.evidence.sourcePage)}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition-all shrink-0 cursor-pointer"
-            >
-              View Follow-Up Document (Pg {followUp.evidence.sourcePage})
-            </button>
+            {followUp?.evidence && (
+              <button
+                onClick={() => onOpenDocumentViewer(followUp.evidence?.sourcePage)}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition-all shrink-0 cursor-pointer"
+              >
+                View Follow-Up Document (Pg {followUp.evidence.sourcePage})
+              </button>
+            )}
           </div>
         </div>
 
@@ -589,7 +620,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
               <div className="flex items-center gap-2">
                 <HeartPulse className="w-4 h-4 text-rose-400" />
                 <span className="text-sm font-bold text-white tracking-tight">
-                  Daily Health Check-In (Day 2)
+                  Daily Health Check-In (Day {currentDay})
                 </span>
               </div>
               <span className="text-[10px] font-mono text-slate-400">Non-Diagnostic Safety</span>
@@ -599,7 +630,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
               {/* 1. Pain assessment */}
               <div>
                 <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                  1. How is your incision pain compared to yesterday?
+                  1. How is your surgical incision & pain compared to yesterday?
                 </label>
                 <div className="grid grid-cols-3 gap-1.5">
                   {(['better', 'same', 'worse'] as PainLevel[]).map((lvl) => (
@@ -624,7 +655,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
               {/* 2. Fever assessment */}
               <div>
                 <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                  2. Do you have a fever or temperature &gt;101°F?
+                  2. Do you have a fever{feverWarning ? ` (${feverWarning.condition})` : ' or chills'}?
                 </label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {(['no', 'yes'] as FeverStatus[]).map((st) => (
@@ -640,7 +671,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
                           : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'
                       }`}
                     >
-                      {st === 'no' ? 'No fever (<100°F)' : 'Fever (>101°F)'}
+                      {st === 'no' ? 'No fever' : feverWarning ? 'Fever / Chills' : 'Yes, fever / chills'}
                     </button>
                   ))}
                 </div>
@@ -649,7 +680,7 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
               {/* 3. Breathing assessment */}
               <div>
                 <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                  3. Are you experiencing any breathing difficulties?
+                  3. Are you experiencing any breathing difficulties{breathingWarning ? ` (${breathingWarning.condition})` : ''}?
                 </label>
                 <div className="grid grid-cols-2 gap-1.5">
                   {(['normal', 'difficult'] as BreathingStatus[]).map((b) => (
@@ -692,6 +723,13 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
                 </div>
               )}
 
+              {symptomNotice && (
+                <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-200 text-xs font-semibold flex items-start gap-1.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                  <span>{symptomNotice}</span>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={isSubmitting}
@@ -703,20 +741,20 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
             </form>
           </div>
 
-          {/* Red Flag Warning Signs Reference (Page 5) */}
+          {/* Red Flag Warning Signs Reference */}
           <div className="bg-rose-950/20 border border-rose-500/30 rounded-3xl p-5 shadow-sm space-y-3">
             <div className="flex items-center justify-between border-b border-rose-500/20 pb-2.5">
               <div className="flex items-center gap-2 text-rose-400">
                 <AlertTriangle className="w-4 h-4" />
                 <span className="text-xs font-bold uppercase tracking-wider">
-                  Emergency Red Flags (Page 5)
+                  Emergency Red Flags (Page {primaryWarningPage})
                 </span>
               </div>
               <button
-                onClick={() => onOpenDocumentViewer(5)}
+                onClick={() => onOpenDocumentViewer(primaryWarningPage)}
                 className="text-[11px] text-rose-300 hover:text-white font-semibold underline cursor-pointer"
               >
-                View Page 5
+                View Page {primaryWarningPage}
               </button>
             </div>
 
@@ -733,6 +771,11 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
                   <div className="font-bold text-rose-300 flex items-center gap-1.5">
                     <span className="w-1.5 h-1.5 rounded-full bg-rose-500" />
                     <span>{w.condition}</span>
+                    {w.sourcePage && (
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        (Pg {w.sourcePage})
+                      </span>
+                    )}
                   </div>
                   <p className="text-[11px] text-slate-400">
                     <strong>Action:</strong> {w.documentedAction}
@@ -761,8 +804,12 @@ export const DesktopView: React.FC<DesktopViewProps> = ({
 
             <div className="p-3 rounded-2xl bg-slate-900 border border-slate-700 flex items-center justify-between text-xs">
               <div>
-                <div className="font-bold text-white">Mrs_Sharma_PostOp_Cholecystectomy.pdf</div>
-                <div className="text-[11px] text-slate-400">5 Pages • Apex Memorial Healthcare</div>
+                <div className="font-bold text-white truncate max-w-[200px]">
+                  {documentTitle || (patient.name ? `${patient.name.replace(/[^a-zA-Z0-9]/g, '_')}_Discharge.pdf` : 'Discharge_Summary.pdf')}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  {patient.hospitalName}
+                </div>
               </div>
               <button
                 onClick={() => onOpenDocumentViewer(1)}

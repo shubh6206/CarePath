@@ -28,7 +28,13 @@ export const PlanTab: React.FC<PlanTabProps> = ({
   onShowEvidence,
   onViewDocumentPage,
 }) => {
-  const currentActivePlan = plans.find((p) => p.dayNumber === selectedDay) || plans[1];
+  const currentActivePlan =
+    plans.find((p) => p.dayNumber === selectedDay) ||
+    plans.find((p) => p.isToday) ||
+    plans[0];
+  const todayPlan = plans.find((p) => p.isToday) || plans[0];
+  const activeDayNumber = todayPlan?.dayNumber ?? selectedDay ?? 1;
+  const totalDays = plans.length || 14;
   const [timelineFilter, setTimelineFilter] = useState<'all' | 'week1' | 'week2'>('all');
 
   const filteredPlans = plans.filter((p) => {
@@ -44,14 +50,14 @@ export const PlanTab: React.FC<PlanTabProps> = ({
         <div className="flex items-center justify-between">
           <div>
             <span className="text-xs font-semibold text-teal-800 tracking-wide">
-              14-Day Post-Op Protocol
+              {totalDays}-Day Post-Op Protocol
             </span>
             <h1 className="text-2xl font-extrabold text-slate-900 tracking-tight">
               Recovery Plan
             </h1>
           </div>
           <span className="text-xs font-bold text-teal-700 bg-teal-50 border border-teal-100 px-3 py-1 rounded-full">
-            Day 2 Active
+            Day {activeDayNumber} Active
           </span>
         </div>
         <p className="text-xs text-slate-500 mt-1">
@@ -69,7 +75,7 @@ export const PlanTab: React.FC<PlanTabProps> = ({
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
-          All 14 Days
+          All {totalDays} Days
         </button>
         <button
           onClick={() => setTimelineFilter('week1')}
@@ -127,14 +133,14 @@ export const PlanTab: React.FC<PlanTabProps> = ({
         {/* Day's Action Breakdown */}
         <div className="space-y-2 text-xs">
           <div className="font-bold text-slate-700 flex items-center justify-between">
-            <span>Key Focus Areas for Day {currentActivePlan.dayNumber}</span>
+            <span>Key Focus Areas for Day {currentActivePlan?.dayNumber}</span>
             <span className="text-[11px] font-medium text-teal-700">
-              {currentActivePlan.medications.length} meds • {currentActivePlan.activities.length} routines
+              {currentActivePlan?.medications?.length ?? 0} meds • {currentActivePlan?.activities?.length ?? 0} routines
             </span>
           </div>
 
           <div className="grid grid-cols-1 gap-2 pt-1">
-            {currentActivePlan.medications.slice(0, 2).map((med) => (
+            {(currentActivePlan?.medications ?? []).slice(0, 2).map((med) => (
               <div
                 key={med.id}
                 className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100"
@@ -153,7 +159,7 @@ export const PlanTab: React.FC<PlanTabProps> = ({
               </div>
             ))}
 
-            {currentActivePlan.activities.slice(0, 2).map((act) => (
+            {(currentActivePlan?.activities ?? []).slice(0, 2).map((act) => (
               <div
                 key={act.id}
                 className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-100"
@@ -269,11 +275,11 @@ export const PlanTab: React.FC<PlanTabProps> = ({
                 <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-500">
                   <span className="flex items-center gap-1">
                     <Pill className="w-3 h-3 text-slate-400" />
-                    {plan.medications.length} meds
+                    {plan.medications?.length ?? 0} meds
                   </span>
                   <span className="flex items-center gap-1">
                     <Footprints className="w-3 h-3 text-slate-400" />
-                    {plan.activities.length} activities
+                    {plan.activities?.length ?? 0} activities
                   </span>
                   <span className="flex items-center gap-1">
                     <Calendar className="w-3 h-3 text-slate-400" />

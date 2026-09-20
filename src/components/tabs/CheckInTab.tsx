@@ -5,6 +5,7 @@ import {
   BreathingStatus,
   WarningSign,
   CheckInRecord,
+  PatientProfile,
 } from '../../types';
 import {
   HeartPulse,
@@ -16,7 +17,7 @@ import {
   ChevronDown,
   Bell,
 } from 'lucide-react';
-import { CarePathApi } from '../../services/api';
+import { CarePathApi, UNMATCHED_SYMPTOM_NOTICE } from '../../services/api';
 
 interface CheckInTabProps {
   onCheckInSubmitted: (record: CheckInRecord, matchedWarning: WarningSign | null) => void;
@@ -24,6 +25,7 @@ interface CheckInTabProps {
   checkInHistory: CheckInRecord[];
   onViewDocumentPage: (pageNumber: number) => void;
   documentId?: string;
+  patient?: PatientProfile;
 }
 
 export const CheckInTab: React.FC<CheckInTabProps> = ({
@@ -32,6 +34,7 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
   checkInHistory,
   onViewDocumentPage,
   documentId,
+  patient,
 }) => {
   const [pain, setPain] = useState<PainLevel>('same');
   const [fever, setFever] = useState<FeverStatus>('no');
@@ -40,24 +43,40 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submittedFeedback, setSubmittedFeedback] = useState<string | null>(null);
   const [snsFeedback, setSnsFeedback] = useState<string | null>(null);
+  const [symptomNotice, setSymptomNotice] = useState<string | null>(null);
+
+  const currentDay = patient?.currentDay ?? 2;
+  const isDemo = patient?.isDemo ?? true;
+  const patientName = patient?.name || 'Patient';
+  const procedureName = patient?.procedure || 'Post-Op Recovery';
+
+  // Dynamic warning signs matching and citations derived from active document rules
+  const feverWarning = warningSigns.find((w) => w.triggerKey === 'fever');
+  const breathingWarning = warningSigns.find((w) => w.triggerKey === 'breathing');
+  const painWarning = warningSigns.find((w) => w.triggerKey === 'pain_worse');
+
+  // Grounding reference page dynamically derived from active document rules
+  const primaryWarningPage =
+    warningSigns.find((w) => typeof w.sourcePage === 'number')?.sourcePage ?? 1;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
+    setSymptomNotice(null);
 
-    // Deterministic safety check: Compare against extracted warning signs from Page 5
+    // Offline fallback only: when the server responds, its evaluation of the active plan is authoritative
     let matchedWarning: WarningSign | null = null;
     if (breathing === 'difficult') {
-      matchedWarning = warningSigns.find((w) => w.triggerKey === 'breathing') || null;
+      matchedWarning = breathingWarning || warningSigns.find((w) => w.triggerKey === 'breathing') || null;
     } else if (fever === 'yes') {
-      matchedWarning = warningSigns.find((w) => w.triggerKey === 'fever') || null;
+      matchedWarning = feverWarning || warningSigns.find((w) => w.triggerKey === 'fever') || null;
     } else if (pain === 'worse') {
-      matchedWarning = warningSigns.find((w) => w.triggerKey === 'pain_worse') || null;
+      matchedWarning = painWarning || warningSigns.find((w) => w.triggerKey === 'pain_worse') || null;
     }
 
     try {
       const res = await CarePathApi.submitCheckIn({
-        dayNumber: 2,
+        dayNumber: currentDay,
         pain,
         fever,
         breathing,
@@ -66,12 +85,14 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
       });
 
       const rec = res.record;
-      onCheckInSubmitted(rec, matchedWarning);
+      onCheckInSubmitted(rec, rec.matchedWarningSign ?? null);
 
       if (rec.warningMatched && rec.snsNotification) {
         setSnsFeedback(
-          `Amazon SNS Alert published to caregiver (+1 800 555-0199) • MsgID: ${rec.snsNotification.messageId || 'sns-dispatch-ok'}`
+          `Amazon SNS alert published to caregiver • MsgID: ${rec.snsNotification.messageId || 'sns-dispatch-ok'}`
         );
+      } else if (rec.unmatchedSymptoms) {
+        setSymptomNotice(UNMATCHED_SYMPTOM_NOTICE);
       } else {
         setSubmittedFeedback('Check-in recorded — Recovery progressing normally.');
         setTimeout(() => setSubmittedFeedback(null), 4000);
@@ -81,7 +102,7 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
       const record: CheckInRecord = {
         id: `checkin-${Date.now()}`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        dayNumber: 2,
+        dayNumber: currentDay,
         pain,
         fever,
         breathing,
@@ -103,14 +124,14 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
     <div id="checkin-tab-view" className="space-y-4 pb-20 pt-1 px-4 sm:px-5 animate-fade-in">
       {/* Header */}
       <div className="pt-2">
-        {/* Fictional Demo Data Banner */}
+        {/* Patient & Day Context Banner */}
         <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl px-3 py-1.5 mb-2 flex items-center justify-between text-[11px] text-amber-900 shadow-2xs">
-          <div className="flex items-center gap-1.5 font-bold">
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
-            <span>Demo patient · Fictional data</span>
+          <div className="flex items-center gap-1.5 font-bold truncate max-w-[220px]">
+            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+            <span className="truncate">{patientName} • {isDemo ? 'Demo patient' : 'Active Patient'}</span>
           </div>
-          <span className="text-[10px] font-mono text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-md">
-            Day 2 Post-Op
+          <span className="text-[10px] font-mono text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-md shrink-0">
+            Day {currentDay} Post-Op
           </span>
         </div>
 
@@ -149,14 +170,28 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
         </div>
       )}
 
+      {symptomNotice && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-950 px-4 py-3 rounded-2xl flex items-start gap-2.5 text-xs font-semibold animate-fade-in">
+          <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+          <span>{symptomNotice}</span>
+        </div>
+      )}
+
       {/* Main Check-In Form */}
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* 1. Pain Control */}
         <div className="bg-white rounded-3xl p-5 border border-slate-200/80 shadow-xs">
           <div className="flex items-center justify-between mb-3">
-            <label className="text-sm font-bold text-slate-900">
-              Surgical Incision Pain
-            </label>
+            <div>
+              <label className="text-sm font-bold text-slate-900">
+                Surgical Incision & Pain Level
+              </label>
+              {painWarning && (
+                <div className="text-[11px] text-slate-400">
+                  Monitored per Page {painWarning.sourcePage || primaryWarningPage} safety rules
+                </div>
+              )}
+            </div>
             <span className="text-xs text-slate-400 font-medium">Compared to yesterday</span>
           </div>
 
@@ -198,15 +233,17 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
                 Fever or Chills
               </label>
               <div className="text-[11px] text-slate-400">
-                Threshold: &gt; 101.0°F (38.3°C) per Page 5 instructions
+                {feverWarning
+                  ? `Safety Rule: ${feverWarning.condition} (Page ${feverWarning.sourcePage})`
+                  : 'Safety Rule: Fever, high temperature or chills per discharge instructions'}
               </div>
             </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2">
             {[
-              { value: 'no' as FeverStatus, label: 'No Fever', sub: 'Under 100°F (Normal)' },
-              { value: 'yes' as FeverStatus, label: 'Yes, Fever / Chills', sub: 'Above 101°F (Trigger)' },
+              { value: 'no' as FeverStatus, label: 'No Fever', sub: 'Normal body temperature' },
+              { value: 'yes' as FeverStatus, label: 'Yes, Fever / Chills', sub: feverWarning ? 'Triggers safety alert' : 'Documented warning sign' },
             ].map((option) => {
               const isSelected = fever === option.value;
               return (
@@ -239,7 +276,9 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
                 Breathing & Chest Comfort
               </label>
               <div className="text-[11px] text-slate-400">
-                Critical post-laparoscopy safety check
+                {breathingWarning
+                  ? `Safety Rule: ${breathingWarning.condition} (Page ${breathingWarning.sourcePage})`
+                  : `Post-procedure recovery safety check (${procedureName})`}
               </div>
             </div>
           </div>
@@ -247,7 +286,7 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
           <div className="grid grid-cols-2 gap-2">
             {[
               { value: 'normal' as BreathingStatus, label: 'Normal Breathing', sub: 'Comfortable & easy' },
-              { value: 'difficult' as BreathingStatus, label: 'Difficult / Shortness', sub: 'Emergency warning sign' },
+              { value: 'difficult' as BreathingStatus, label: 'Difficult / Shortness', sub: breathingWarning ? 'Critical alert trigger' : 'Emergency warning sign' },
             ].map((option) => {
               const isSelected = breathing === option.value;
               return (
@@ -307,10 +346,10 @@ export const CheckInTab: React.FC<CheckInTabProps> = ({
         <div>
           <span>CarePath safety engine matches responses against</span>{' '}
           <button
-            onClick={() => onViewDocumentPage(5)}
+            onClick={() => onViewDocumentPage(primaryWarningPage)}
             className="text-teal-700 font-bold hover:underline cursor-pointer"
           >
-            Page 5 Emergency Protocol
+            Page {primaryWarningPage} Emergency Protocol
           </button>
           . No automated diagnosis is ever generated.
         </div>

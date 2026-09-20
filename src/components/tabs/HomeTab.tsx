@@ -28,7 +28,7 @@ interface HomeTabProps {
   patient: PatientProfile;
   medications: MedicationTask[];
   activities: ActivityTask[];
-  followUp: FollowUpAppointment;
+  followUp: FollowUpAppointment | null;
   warningSigns: WarningSign[];
   onToggleMedication: (id: string) => void;
   onToggleActivity: (id: string) => void;
@@ -70,14 +70,14 @@ export const HomeTab: React.FC<HomeTabProps> = ({
     <div id="home-tab-view" className="space-y-4 pb-20 pt-1 px-4 sm:px-5 animate-fade-in">
       {/* Patient Greeting & Status Header */}
       <div className="pt-2 space-y-2">
-        {/* Fictional Demo Data Banner */}
+        {/* Dynamic Patient & Procedure Context Banner */}
         <div className="bg-amber-50/90 border border-amber-200/90 rounded-2xl px-3 py-1.5 flex items-center justify-between text-[11px] text-amber-900 shadow-2xs">
-          <div className="flex items-center gap-1.5 font-bold">
-            <span className="w-2 h-2 rounded-full bg-amber-500" />
-            <span>Demo patient · Fictional data</span>
+          <div className="flex items-center gap-1.5 font-bold truncate max-w-[200px]">
+            <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+            <span className="truncate">{patient.isDemo ? 'Demo patient · Fictional data' : 'Active Patient'}</span>
           </div>
-          <span className="text-[10px] font-mono text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-md">
-            Lap. Cholecystectomy
+          <span className="text-[10px] font-mono text-amber-700 bg-amber-100/70 px-2 py-0.5 rounded-md truncate max-w-[170px]">
+            {patient.procedure || 'Post-Op Care'}
           </span>
         </div>
 
@@ -475,32 +475,48 @@ export const HomeTab: React.FC<HomeTabProps> = ({
               Upcoming Surgical Follow-Up
             </span>
           </div>
-          <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-md">
-            {followUp.date.split('(')[0]}
-          </span>
+          {followUp && (
+            <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-md">
+              {followUp.date.split('(')[0]}
+            </span>
+          )}
         </div>
 
-        <h4 className="text-sm font-bold text-slate-900">
-          {followUp.title}
-        </h4>
-        <p className="text-xs text-slate-600 mt-1">
-          {followUp.doctor} • {followUp.location}
-        </p>
+        {followUp ? (
+          <>
+            <h4 className="text-sm font-bold text-slate-900">
+              {followUp.title}
+            </h4>
+            <p className="text-xs text-slate-600 mt-1">
+              {followUp.doctor} • {followUp.location}
+            </p>
 
-        <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
-          <button
-            onClick={() => onShowEvidence(followUp.evidence, followUp.title)}
-            className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-800 cursor-pointer"
-          >
-            <span>Why this appointment? →</span>
-          </button>
-          <button
-            onClick={() => onViewDocumentPage(followUp.evidence.sourcePage)}
-            className="text-xs text-slate-500 hover:text-slate-700 font-medium"
-          >
-            View page {followUp.evidence.sourcePage}
-          </button>
-        </div>
+            <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between">
+              {followUp.evidence ? (
+                <>
+                  <button
+                    onClick={() => onShowEvidence(followUp.evidence!, followUp.title)}
+                    className="inline-flex items-center gap-1 text-xs font-semibold text-teal-700 hover:text-teal-800 cursor-pointer"
+                  >
+                    <span>Why this appointment? →</span>
+                  </button>
+                  <button
+                    onClick={() => onViewDocumentPage(followUp.evidence!.sourcePage)}
+                    className="text-xs text-slate-500 hover:text-slate-700 font-medium"
+                  >
+                    View page {followUp.evidence.sourcePage}
+                  </button>
+                </>
+              ) : (
+                <span className="text-xs text-slate-400">Documented Appointment</span>
+              )}
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-slate-500">
+            No follow-up appointment was found in your discharge paperwork.
+          </p>
+        )}
       </div>
 
       {/* WATCH FOR: Documented Warning Signs Glance */}
@@ -513,12 +529,14 @@ export const HomeTab: React.FC<HomeTabProps> = ({
             <AlertTriangle className="w-4 h-4" />
             <span>Documented Warning Signs to Watch For</span>
           </div>
-          <button
-            onClick={() => onViewDocumentPage(5)}
-            className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline"
-          >
-            Page 5
-          </button>
+          {warningSigns.length > 0 && (
+            <button
+              onClick={() => onViewDocumentPage(warningSigns[0].sourcePage || 1)}
+              className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 underline"
+            >
+              Page {warningSigns[0].sourcePage || 1}
+            </button>
+          )}
         </div>
 
         <ul className="space-y-1.5 text-slate-600">
