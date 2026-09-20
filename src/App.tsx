@@ -6,15 +6,10 @@ import {
   CheckInRecord,
   MedicationTask,
   ActivityTask,
+  FollowUpAppointment,
+  PatientProfile,
+  DailyPlan,
 } from './types';
-import {
-  mockPatient,
-  mockWarningSigns,
-  mockFollowUp,
-  mockTodayMedications,
-  mockTodayActivities,
-  mock14DayPlan,
-} from './data/mockDischargeData';
 import { PhoneFrame } from './components/PhoneFrame';
 import { BottomNavigation } from './components/BottomNavigation';
 import { HomeTab } from './components/tabs/HomeTab';
@@ -29,85 +24,74 @@ import { UploadModal } from './components/UploadModal';
 import { DesktopView } from './components/DesktopView';
 import { CarePathApi } from './services/api';
 
+const initialPatient: PatientProfile = {
+  name: 'Loading Recovery Plan...',
+  diagnosis: 'Discharge Summary',
+  procedure: 'Post-Op Care',
+  dischargeDate: '',
+  currentDay: 1,
+  totalDays: 14,
+  hospitalName: 'CarePath Clinical System',
+  attendingPhysician: 'Care Team',
+  isDemo: false,
+};
+
 export default function App() {
   // Navigation & View Mode
   const [viewMode, setViewMode] = useState<'mobile' | 'desktop'>('mobile');
   const [currentTab, setCurrentTab] = useState<TabType>('home');
-  const [selectedPlanDay, setSelectedPlanDay] = useState<number>(2);
+  const [selectedPlanDay, setSelectedPlanDay] = useState<number>(1);
 
   // Application Data State
-  const [patient, setPatient] = useState(mockPatient);
-  const [medications, setMedications] = useState<MedicationTask[]>(mockTodayMedications);
-  const [activities, setActivities] = useState<ActivityTask[]>(mockTodayActivities);
-  const [warningSigns, setWarningSigns] = useState<WarningSign[]>(mockWarningSigns);
-  const [followUp, setFollowUp] = useState(mockFollowUp);
-  const [plans, setPlans] = useState(mock14DayPlan);
+  const [patient, setPatient] = useState<PatientProfile>(initialPatient);
+  const [medications, setMedications] = useState<MedicationTask[]>([]);
+  const [activities, setActivities] = useState<ActivityTask[]>([]);
+  const [warningSigns, setWarningSigns] = useState<WarningSign[]>([]);
+  const [followUp, setFollowUp] = useState<FollowUpAppointment | null>(null);
+  const [plans, setPlans] = useState<DailyPlan[]>([]);
   const [documentPages, setDocumentPages] = useState<any[] | undefined>(undefined);
   const [activeDocumentId, setActiveDocumentId] = useState<string | undefined>(undefined);
   const [documentTitle, setDocumentTitle] = useState<string | undefined>(undefined);
-  const [checkInHistory, setCheckInHistory] = useState<CheckInRecord[]>([
-    {
-      id: 'checkin-day1',
-      timestamp: 'Yesterday, 8:30 PM',
-      dayNumber: 1,
-      pain: 'same',
-      fever: 'no',
-      breathing: 'normal',
-      notes: 'Discharged from hospital, rested well.',
-      warningMatched: false,
-    },
-  ]);
+  const [checkInHistory, setCheckInHistory] = useState<CheckInRecord[]>([]);
 
   // Load live data from backend API
   const refreshActivePlan = () => {
     CarePathApi.getActiveRecoveryPlan()
       .then((plan) => {
-        if (plan && plan.patient) {
-          setPatient((prev) => ({
-            ...prev,
-            ...plan.patient,
-            name: plan.patient.name || prev.name,
-            procedure: plan.patient.procedure || prev.procedure,
-            attendingPhysician: plan.patient.attendingPhysician || prev.attendingPhysician,
-            hospitalName: plan.patient.hospitalName || prev.hospitalName,
-          }));
-        }
-        if (plan?.documentId) {
-          setActiveDocumentId(plan.documentId);
-        }
-        if (plan?.medications?.length) {
-          setMedications(plan.medications);
-        }
-        if (plan?.activities?.length) {
-          setActivities(plan.activities);
-        }
-        if (plan?.warningSigns?.length) {
-          setWarningSigns(plan.warningSigns);
-        }
-        if (plan?.followUp) {
-          setFollowUp(plan.followUp);
-        }
-        if (plan?.pages?.length) {
-          setDocumentPages(plan.pages);
-        }
-        if (plan?.plans?.length) {
+        if (!plan?.patient) return;
+        // Replace every field (empty lists included) so a new plan never shows the previous patient's items
+        setPatient(plan.patient);
+        setActiveDocumentId(plan.documentId);
+        setMedications(plan.medications ?? []);
+        setActivities(plan.activities ?? []);
+        setWarningSigns(plan.warningSigns ?? []);
+        setFollowUp(plan.followUp ?? null);
+        setDocumentPages(plan.pages?.length ? plan.pages : undefined);
+        if (plan.plans?.length) {
           setPlans(plan.plans);
         }
         if (plan?.medications?.[0]?.evidence?.documentName) {
           setDocumentTitle(plan.medications[0].evidence.documentName);
+        } else if (plan?.patient?.name) {
+          setDocumentTitle(`${plan.patient.name}_Discharge_Summary.pdf`);
         }
+
+        if (typeof plan.patient.currentDay === 'number') {
+          setSelectedPlanDay(plan.patient.currentDay);
+        }
+
+        // Fetch check-in history scoped strictly to the active document/patient
+        CarePathApi.getCheckInHistory(plan.documentId)
+          .then((history) => {
+            setCheckInHistory(history || []);
+          })
+          .catch(() => {
+            setCheckInHistory([]);
+          });
       })
       .catch((err) => {
         console.warn('Using baseline verified recovery data:', err);
       });
-
-    CarePathApi.getCheckInHistory()
-      .then((history) => {
-        if (history && history.length > 0) {
-          setCheckInHistory(history);
-        }
-      })
-      .catch(() => {});
   };
 
   React.useEffect(() => {
@@ -165,25 +149,25 @@ export default function App() {
 
   // Trigger Breathing Alert (Hackathon Judging Shortcut)
   const handleTriggerBreathingAlert = () => {
-    const breathingWarning = mockWarningSigns.find((w) => w.triggerKey === 'breathing') || mockWarningSigns[0];
-    setActiveSafetyWarning(breathingWarning);
+    const breathingWarning = warningSigns.find((w) => w.triggerKey === 'breathing') ?? warningSigns[0];
+    if (breathingWarning) {
+      setActiveSafetyWarning(breathingWarning);
+    }
   };
 
-  // Reset Demo State
+  // Reset Demo / Active State
   const handleResetDemo = () => {
-    setPatient(mockPatient);
-    setMedications(mockTodayMedications);
-    setActivities(mockTodayActivities);
+    refreshActivePlan();
     setCurrentTab('home');
-    setSelectedPlanDay(2);
     setActiveSafetyWarning(null);
     setActiveEvidence(null);
   };
 
+  const currentPatientDay = patient.currentDay ?? 2;
   const remainingMedCount = medications.filter((m) => !m.completed).length;
   const remainingActCount = activities.filter((a) => !a.completed).length;
   const totalRemainingTasks = remainingMedCount + remainingActCount;
-  const hasCompletedCheckInToday = checkInHistory.some((c) => c.dayNumber === 2);
+  const hasCompletedCheckInToday = checkInHistory.some((c) => c.dayNumber === currentPatientDay);
 
   return (
     <>
@@ -208,6 +192,8 @@ export default function App() {
           onTriggerBreathingAlert={handleTriggerBreathingAlert}
           onResetDemo={handleResetDemo}
           onSwitchToMobile={() => setViewMode('mobile')}
+          documentId={activeDocumentId}
+          documentTitle={documentTitle}
         />
       ) : (
         <PhoneFrame
@@ -262,6 +248,7 @@ export default function App() {
                 checkInHistory={checkInHistory}
                 onViewDocumentPage={handleOpenDocumentViewer}
                 documentId={activeDocumentId}
+                patient={patient}
               />
             )}
 
