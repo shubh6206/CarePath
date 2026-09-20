@@ -131,7 +131,7 @@ export const PhoneFrame: React.FC<PhoneFrameProps> = ({
             id="judge-trigger-safety-btn"
             onClick={onTriggerBreathingAlert}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-semibold transition-all cursor-pointer"
-            title="Demo Warning Sign Match from Page 5"
+            title="Test Warning Sign Match"
           >
             <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
             <span className="hidden lg:inline">Test Safety Match</span>
@@ -153,7 +153,7 @@ export const PhoneFrame: React.FC<PhoneFrameProps> = ({
             id="judge-open-doc-btn"
             onClick={() => onOpenDocumentViewer(1)}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition-all cursor-pointer"
-            title="Inspect 5-Page Discharge PDF"
+            title="Inspect Discharge PDF"
           >
             <FileText className="w-3.5 h-3.5 text-slate-300" />
             <span className="hidden lg:inline">Original PDF</span>

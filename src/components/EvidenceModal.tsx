@@ -1,6 +1,6 @@
 import React from 'react';
 import { EvidenceSource } from '../types';
-import { FileText, ExternalLink, X, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { FileText, ExternalLink, X, ShieldCheck, CheckCircle2, AlertTriangle } from 'lucide-react';
 
 interface EvidenceModalProps {
   evidence: EvidenceSource | null;
@@ -16,6 +16,10 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
   onViewDocumentPage,
 }) => {
   if (!evidence) return null;
+
+  // Anything the server has not confirmed verbatim (including offline data) is shown as unverified
+  const isVerified = evidence.citationStatus === 'VERIFIED';
+  const page = evidence.sourcePage;
 
   return (
     <div
@@ -64,30 +68,60 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
             </div>
           )}
 
-          {/* Core Evidence Box */}
-          <div className="mb-4 bg-teal-50/60 rounded-2xl p-4 border border-teal-100/80">
-            <div className="text-xs font-semibold text-teal-900 mb-1 flex items-center justify-between">
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-teal-600"></span>
-                Amazon Textract Verbatim Source (Page {evidence.sourcePage}):
-              </span>
-              <span className="text-[10px] text-teal-700 bg-teal-100/80 px-2 py-0.5 rounded font-mono">
-                Verified OCR
-              </span>
+          {/* Citation Verification Badge */}
+          {isVerified ? (
+            <div
+              id="citation-verified-badge"
+              className="mb-3 inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-full"
+            >
+              ✓ Verified Verbatim from Page {page}
             </div>
-            <blockquote className="text-sm italic font-medium text-slate-900 border-l-3 border-teal-600 pl-3 py-1.5 my-2 bg-white/90 rounded-r-lg shadow-2xs leading-relaxed">
-              "{evidence.originalText}"
+          ) : (
+            <div
+              id="citation-unverified-badge"
+              className="mb-3 flex items-start gap-1.5 text-xs font-bold text-amber-900 bg-amber-50 border border-amber-300 px-3 py-2 rounded-2xl"
+            >
+              ⚠️ Citation Unverified on Page {page} — Verify with physical paperwork
+            </div>
+          )}
+
+          {/* Core Evidence Box */}
+          <div
+            className={`mb-4 rounded-2xl p-4 border ${
+              isVerified ? 'bg-teal-50/60 border-teal-100/80' : 'bg-amber-50/60 border-amber-200/80'
+            }`}
+          >
+            <div className={`text-xs font-semibold mb-1 flex items-center gap-1.5 ${isVerified ? 'text-teal-900' : 'text-amber-900'}`}>
+              <span className={`inline-block w-2 h-2 rounded-full ${isVerified ? 'bg-teal-600' : 'bg-amber-500'}`}></span>
+              {isVerified ? `Amazon Textract Verbatim Source (Page ${page}):` : `AI-cited quote (Page ${page}):`}
+            </div>
+            <blockquote
+              className={`text-sm italic font-medium text-slate-900 border-l-3 pl-3 py-1.5 my-2 bg-white/90 rounded-r-lg shadow-2xs leading-relaxed whitespace-pre-line ${
+                isVerified ? 'border-teal-600' : 'border-amber-500'
+              }`}
+            >
+              {evidence.originalText ? `"${evidence.originalText}"` : 'No source quote was provided for this item.'}
             </blockquote>
+            {!isVerified && (
+              <p className="text-[11px] text-amber-800 mt-1">
+                {evidence.verificationNote || `Exact wording could not be confirmed on Page ${page}.`}
+              </p>
+            )}
           </div>
 
           {/* Safety Verification Chain */}
           <div className="mb-4 bg-slate-50 rounded-2xl p-3 border border-slate-100 text-[11px] text-slate-600 space-y-1">
             <div className="font-bold text-slate-700 flex items-center gap-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+              {isVerified ? (
+                <CheckCircle2 className="w-3.5 h-3.5 text-teal-600" />
+              ) : (
+                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+              )}
               Source Verification Chain
             </div>
             <div className="font-mono text-[10px] text-slate-500">
-              Textract OCR (Page {evidence.sourcePage}) → Bedrock Instruction Match → Verbatim Sentence Anchor
+              Textract OCR (Page {page}) → Bedrock Instruction Match →{' '}
+              {isVerified ? 'Verbatim Sentence Anchor' : 'Verbatim match not found'}
             </div>
           </div>
 
@@ -100,7 +134,7 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
             <div className="flex justify-between items-center py-2 border-b border-slate-100">
               <span className="text-slate-500 font-medium">Page Citation</span>
               <span className="inline-flex items-center gap-1.5 font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-full">
-                Page {evidence.sourcePage} of 5
+                Page {page}
               </span>
             </div>
             <div className="flex justify-between items-center py-2">
@@ -127,8 +161,12 @@ export const EvidenceModal: React.FC<EvidenceModalProps> = ({
 
             {/* Zero-Diagnosis Safety Badge */}
             <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-500">
-              <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
-              <span>Grounded in hospital paperwork • Zero LLM quotation fabrication</span>
+              <ShieldCheck className={`w-3.5 h-3.5 ${isVerified ? 'text-teal-600' : 'text-amber-600'}`} />
+              <span>
+                {isVerified
+                  ? 'Grounded in hospital paperwork • Quote matched word-for-word'
+                  : 'Check this item against your printed discharge paperwork'}
+              </span>
             </div>
           </div>
         </div>

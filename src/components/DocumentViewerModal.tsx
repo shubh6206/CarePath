@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { DocumentPage } from '../types';
-import { mockDischargeDocumentPages } from '../data/mockDischargeData';
 import { FileText, X, ChevronLeft, ChevronRight, CheckCircle2, ShieldCheck, Printer } from 'lucide-react';
 
 interface DocumentViewerModalProps {
@@ -12,15 +11,24 @@ interface DocumentViewerModalProps {
   isDemo?: boolean;
 }
 
+const defaultEmptyPages: DocumentPage[] = [
+  {
+    pageNumber: 1,
+    title: 'Clinical Discharge Paperwork',
+    content: 'No extracted page records are currently loaded. Upload a discharge summary to inspect OCR extracted evidence and source records.',
+    highlights: [],
+  },
+];
+
 export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
   initialPage = 1,
   onClose,
   pages,
   documentTitle,
   hospitalName,
-  isDemo = true,
+  isDemo = false,
 }) => {
-  const displayPages = pages && pages.length > 0 ? pages : mockDischargeDocumentPages;
+  const displayPages = pages && pages.length > 0 ? pages : defaultEmptyPages;
   const pageNumbers = displayPages.map((p) => p.pageNumber);
   const [activePage, setActivePage] = useState<number>(initialPage);
 
@@ -34,6 +42,9 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
 
   const currentPageData =
     displayPages.find((p) => p.pageNumber === activePage) || displayPages[0];
+
+  const firstPage = pageNumbers[0] ?? 1;
+  const lastPage = pageNumbers[pageNumbers.length - 1] ?? 1;
 
   return (
     <div
@@ -161,8 +172,11 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
         {/* Footer Navigation */}
         <div className="p-3 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
           <button
-            onClick={() => setActivePage((p) => Math.max(1, p - 1))}
-            disabled={activePage === 1}
+            onClick={() => {
+              const prevIdx = pageNumbers.indexOf(activePage) - 1;
+              if (prevIdx >= 0) setActivePage(pageNumbers[prevIdx]);
+            }}
+            disabled={activePage === firstPage}
             className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 disabled:opacity-40 hover:bg-slate-50"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -170,12 +184,15 @@ export const DocumentViewerModal: React.FC<DocumentViewerModalProps> = ({
           </button>
 
           <span className="text-xs font-bold text-slate-600">
-            Page {activePage} of 5
+            Page {activePage} of {displayPages.length}
           </span>
 
           <button
-            onClick={() => setActivePage((p) => Math.min(5, p + 1))}
-            disabled={activePage === 5}
+            onClick={() => {
+              const nextIdx = pageNumbers.indexOf(activePage) + 1;
+              if (nextIdx < pageNumbers.length) setActivePage(pageNumbers[nextIdx]);
+            }}
+            disabled={activePage === lastPage}
             className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 disabled:opacity-40 hover:bg-slate-50"
           >
             <span>Next</span>

@@ -59,8 +59,8 @@ export const AwsArchitectureModal: React.FC<AwsArchitectureModalProps> = ({ onCl
     setSnsTriggering(true);
     try {
       const res = await CarePathApi.triggerSnsTest(
-        'Severe abdominal pain escalation (Page 5)',
-        2
+        'Severe abdominal pain escalation (Discharge Warning Signs)',
+        1
       );
       setSnsResult(res.sns);
       refreshStatusAndAlerts();
@@ -312,7 +312,7 @@ export const AwsArchitectureModal: React.FC<AwsArchitectureModalProps> = ({ onCl
                   <span className="text-[10px] font-mono text-slate-400">Recipient: +1 800 555-0199</span>
                 </div>
                 <p className="text-xs text-slate-500 mb-3">
-                  Simulates a Day 2 check-in where a patient symptom matches Page 5 red flags, triggering LocalStack SNS & Alert Simulator.
+                  Simulates a patient check-in where a symptom matches documented discharge red flags, triggering LocalStack SNS & Alert Simulator.
                 </p>
 
                 <button

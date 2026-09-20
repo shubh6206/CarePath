@@ -24,40 +24,52 @@ type PipelineStep =
   | 'structuring'
   | 'validating'
   | 'saving'
-  | 'ready';
+  | 'ready'
+  | 'error';
 
 export const UploadModal: React.FC<UploadModalProps> = ({
   onClose,
   onProcessingComplete,
 }) => {
   const [step, setStep] = useState<PipelineStep>('idle');
-  const [fileName, setFileName] = useState<string>('discharge_instructions_sharma.pdf');
+  const [fileName, setFileName] = useState<string>('discharge_instructions.pdf');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [summary, setSummary] = useState<{ medications: number; days: number; warnings: number } | null>(null);
 
   const startPipeline = async (name: string, fileBase64?: string, isDemo = true) => {
     setFileName(name);
     setErrorMessage(null);
+    setSummary(null);
     setStep('uploading');
 
+    // Step transitions that visually track the pipeline execution
+    const timers = [
+      setTimeout(() => setStep('extracting'), 400),
+      setTimeout(() => setStep('structuring'), 800),
+      setTimeout(() => setStep('validating'), 1200),
+      setTimeout(() => setStep('saving'), 1500),
+    ];
+
     try {
-      // Step transitions that visually track the pipeline execution
-      const t1 = setTimeout(() => setStep('extracting'), 400);
-      const t2 = setTimeout(() => setStep('structuring'), 800);
-      const t3 = setTimeout(() => setStep('validating'), 1200);
-      const t4 = setTimeout(() => setStep('saving'), 1500);
-
-      await CarePathApi.uploadDocument(name, fileBase64, isDemo);
-
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      clearTimeout(t4);
-
+      const { recoveryPlan } = await CarePathApi.uploadDocument(name, fileBase64, isDemo);
+      setSummary({
+        medications: recoveryPlan.medications.length,
+        days: recoveryPlan.patient.totalDays,
+        warnings: recoveryPlan.warningSigns.length,
+      });
       setStep('ready');
     } catch (err) {
-      console.warn('Backend upload notice (running fallback display):', err);
-      // Even if offline/local, transition cleanly to ready
-      setStep('ready');
+      if (isDemo) {
+        // Offline demo: the app keeps showing its bundled demo data, so transition cleanly to ready
+        console.warn('Backend upload notice (running fallback display):', err);
+        setStep('ready');
+      } else {
+        // A patient's own document failed: never present the previous plan as theirs
+        setErrorMessage((err as Error).message || 'This document could not be processed.');
+        setStep('error');
+      }
+    } finally {
+      timers.forEach(clearTimeout);
     }
   };
 
@@ -73,14 +85,19 @@ export const UploadModal: React.FC<UploadModalProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const isProcessing = step !== 'idle' && step !== 'ready';
+  const isProcessing = step !== 'idle' && step !== 'ready' && step !== 'error';
+  const shownSummary = summary ?? {
+    medications: 0,
+    days: 14,
+    warnings: 0,
+  };
 
   const stepsList = [
     { key: 'uploading', label: 'Document Storage (LocalStack S3 / Storage)', desc: 'Encrypted storage of discharge document packet' },
-    { key: 'extracting', label: 'Layout & Text Extraction (Local Textract-compatible)', desc: 'Preserving Page 1–5 evidence boundaries and line blocks' },
+    { key: 'extracting', label: 'Layout & Text Extraction (Local Textract-compatible)', desc: 'Preserving evidence boundaries and OCR page line blocks' },
     { key: 'structuring', label: 'Clinical Structuring (Local Clinical AI Provider)', desc: 'Zero-diagnosis prompt enforcing verbatim citations' },
     { key: 'validating', label: 'Safety Boundaries & Source Verification', desc: 'Cross-verifying source citations against OCR text' },
-    { key: 'saving', label: 'Partitioned State (Local DynamoDB)', desc: 'Persisting 14-day recovery timeline and tasks' },
+    { key: 'saving', label: 'Partitioned State (Local DynamoDB)', desc: 'Persisting recovery timeline and tasks' },
   ];
 
   const getStepStatus = (itemKey: string) => {
@@ -158,11 +175,11 @@ export const UploadModal: React.FC<UploadModalProps> = ({
               {/* Demo Document Option */}
               <div className="pt-2">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 text-center">
-                  Or load official hackathon demo document
+                  Or load sample clinical discharge packet
                 </div>
                 <button
                   id="load-demo-doc-btn"
-                  onClick={() => startPipeline('Mrs_Sharma_PostOp_Cholecystectomy.pdf', undefined, true)}
+                  onClick={() => startPipeline('Sample_PostOp_Discharge_Summary.pdf', undefined, true)}
                   className="w-full flex items-center justify-between p-3.5 rounded-2xl bg-slate-50 hover:bg-slate-100 border border-slate-200 transition-all text-left cursor-pointer"
                 >
                   <div className="flex items-center gap-2.5">
@@ -171,10 +188,10 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                     </div>
                     <div>
                       <div className="text-xs font-bold text-slate-900">
-                        Mrs. Sharma — Laparoscopic Cholecystectomy (5 Pages)
+                        Sample Surgical Discharge Summary
                       </div>
                       <div className="text-[10px] text-slate-500">
-                        Fictional demo packet · Verified source page citations
+                        Multi-page clinical discharge packet · Verified citations
                       </div>
                     </div>
                   </div>
@@ -250,15 +267,15 @@ export const UploadModal: React.FC<UploadModalProps> = ({
 
               <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 text-xs text-slate-600 grid grid-cols-3 gap-2">
                 <div>
-                  <strong className="block text-slate-900 text-sm">4</strong>
+                  <strong className="block text-slate-900 text-sm">{shownSummary.medications}</strong>
                   <span>Medications</span>
                 </div>
                 <div>
-                  <strong className="block text-slate-900 text-sm">14 Days</strong>
+                  <strong className="block text-slate-900 text-sm">{shownSummary.days} Days</strong>
                   <span>Timeline</span>
                 </div>
                 <div>
-                  <strong className="block text-slate-900 text-sm">3</strong>
+                  <strong className="block text-slate-900 text-sm">{shownSummary.warnings}</strong>
                   <span>Warning Signs</span>
                 </div>
               </div>
@@ -272,6 +289,30 @@ export const UploadModal: React.FC<UploadModalProps> = ({
                 className="w-full py-3.5 px-4 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
               >
                 Open Recovery Dashboard
+              </button>
+            </div>
+          )}
+
+          {step === 'error' && (
+            <div className="text-center py-4 space-y-4 animate-fade-in">
+              <div className="w-14 h-14 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center mx-auto shadow-xs">
+                <AlertCircle className="w-8 h-8" />
+              </div>
+
+              <div>
+                <h4 className="text-base font-bold text-slate-900">
+                  Document Could Not Be Processed
+                </h4>
+                <p className="text-xs text-slate-600 mt-1 max-w-xs mx-auto">{errorMessage}</p>
+                <p className="text-[11px] text-slate-400 mt-2">Your current recovery plan has not changed.</p>
+              </div>
+
+              <button
+                id="upload-try-again-btn"
+                onClick={() => setStep('idle')}
+                className="w-full py-3.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+              >
+                Try Another Document
               </button>
             </div>
           )}
