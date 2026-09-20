@@ -133,10 +133,11 @@ export class LocalExtractionService {
   ): Promise<LocalTextractCompatibleOutput> {
     console.log(`[LocalExtractionService] Processing document '${filename}' (Local Textract-compatible engine)`);
 
-    // In local development, parse arbitrary PDFs or text files, falling back to demo pages ONLY when explicitly empty
+    // In local development, parse arbitrary PDFs or text files; demo pages are used ONLY when no file is provided
     let pages: TextractPage[] = [];
+    const hasFile = Boolean(fileBuffer && fileBuffer.length > 0);
 
-    if (fileBuffer && fileBuffer.length > 0) {
+    if (fileBuffer && hasFile) {
       // Strategy 1: Check if binary PDF buffer
       const isPdfHeader = fileBuffer.slice(0, 5).toString('ascii').startsWith('%PDF');
       const isPdfExtension = filename.toLowerCase().endsWith('.pdf');
@@ -171,8 +172,8 @@ export class LocalExtractionService {
         }
       }
 
-      // Strategy 2: If PDF extraction yielded no pages or file is plain text / structured ASCII
-      if (pages.length === 0) {
+      // Strategy 2: Plain text / structured ASCII. A real PDF with no text layer is not decoded as text.
+      if (pages.length === 0 && !isPdfHeader) {
         try {
           const rawString = fileBuffer.toString('utf-8');
 
@@ -227,9 +228,14 @@ export class LocalExtractionService {
       }
     }
 
-    // Default to demo surgical pages ONLY if no file buffer was provided
     if (pages.length === 0) {
-      console.log('[LocalExtractionService] No custom file text found, utilizing standard demo fixture');
+      if (hasFile) {
+        // Never substitute the demo packet for a patient's own document
+        throw new Error(
+          `No readable text found in '${filename}'. Scanned or image-only PDFs need Amazon Textract (TEXTRACT_MODE=aws).`
+        );
+      }
+      console.log('[LocalExtractionService] No file provided, using the standard demo packet');
       pages = DEMO_SURGICAL_PAGES;
     }
 

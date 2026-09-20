@@ -1,6 +1,8 @@
 import { DocumentService } from './documentService';
 import { StorageService } from './storage/storageService';
-import { NotificationService, CaregiverAlertRecord } from './notification/notificationService';
+import { NotificationService } from './notification/notificationService';
+import { SymptomKey } from './documentModel';
+import { inferSymptomKey, isSymptomKey } from './ai/recoveryOutputSchema';
 
 export interface CheckInSubmission {
   dayNumber: number;
@@ -21,6 +23,8 @@ export interface CheckInRecordResponse {
   notes?: string;
   warningMatched: boolean;
   matchedWarningSign?: any;
+  // Reported symptoms the active plan has no documented warning sign for
+  unmatchedSymptoms?: SymptomKey[];
   snsNotification?: {
     published: boolean;
     messageId?: string;
@@ -32,54 +36,46 @@ export interface CheckInRecordResponse {
 
 const inMemoryCheckIns = new Map<string, CheckInRecordResponse[]>();
 
+// Evaluation order when several symptoms are reported at once
+const SYMPTOM_PRIORITY: SymptomKey[] = ['breathing', 'fever', 'pain_worse'];
+
+function reportedSymptoms(submission: CheckInSubmission): SymptomKey[] {
+  const reported: Record<SymptomKey, boolean> = {
+    breathing: submission.breathing === 'difficult',
+    fever: submission.fever === 'yes',
+    pain_worse: submission.pain === 'worse',
+  };
+  return SYMPTOM_PRIORITY.filter((symptom) => reported[symptom]);
+}
+
+function warningSymptom(warning: any): SymptomKey | undefined {
+  return isSymptomKey(warning.triggerKey)
+    ? warning.triggerKey
+    : inferSymptomKey(`${warning.condition ?? ''} ${warning.evidence?.originalText ?? ''}`);
+}
+
 export class CheckInService {
   /**
-   * Deterministic matching against Page 5 documented warnings
+   * Deterministic matching of reported symptoms against the active plan's documented warning signs.
+   * Nothing is matched when the paperwork documents no warning sign for a symptom.
    */
-  static matchWarningSign(
+  static evaluateWarningSigns(
     submission: CheckInSubmission,
     warningSigns: any[]
-  ): any | null {
-    if (submission.breathing === 'difficult') {
-      return (
-        warningSigns.find((w) => w.triggerKey === 'breathing') || {
-          condition: 'Difficulty breathing or shortness of breath',
-          triggerKey: 'breathing',
-          severity: 'urgent',
-          documentedAction:
-            'Call the hospital emergency line immediately (+1 800 555-0199) or proceed to Emergency Room.',
-          sourcePage: 5,
-        }
-      );
+  ): { matchedWarning: any | null; unmatchedSymptoms: SymptomKey[] } {
+    const matches: any[] = [];
+    const unmatchedSymptoms: SymptomKey[] = [];
+
+    for (const symptom of reportedSymptoms(submission)) {
+      const documented = warningSigns.filter((w) => warningSymptom(w) === symptom);
+      if (documented.length > 0) matches.push(...documented);
+      else unmatchedSymptoms.push(symptom);
     }
 
-    if (submission.fever === 'yes') {
-      return (
-        warningSigns.find((w) => w.triggerKey === 'fever') || {
-          condition: 'Persistent high fever (>101°F / 38.3°C)',
-          triggerKey: 'fever',
-          severity: 'high',
-          documentedAction:
-            'Notify the surgical post-op team within 2 hours at +1 (800) 555-0144.',
-          sourcePage: 5,
-        }
-      );
-    }
-
-    if (submission.pain === 'worse') {
-      return (
-        warningSigns.find((w) => w.triggerKey === 'pain_worse') || {
-          condition: 'Severe or worsening abdominal pain',
-          triggerKey: 'pain_worse',
-          severity: 'high',
-          documentedAction:
-            'Call the 24/7 post-op nurse coordinator immediately.',
-          sourcePage: 5,
-        }
-      );
-    }
-
-    return null;
+    return {
+      matchedWarning: matches.find((w) => w.severity === 'urgent') ?? matches[0] ?? null,
+      unmatchedSymptoms,
+    };
   }
 
   /**
@@ -89,16 +85,16 @@ export class CheckInService {
     submission: CheckInSubmission,
     matchedWarning: any,
     patientName = 'Patient',
-    caregiverPhone = '+1 (800) 555-0199'
+    caregiverPhone?: string
   ): Promise<{ published: boolean; messageId?: string; topicArn?: string; detail: string; isRealSms: false }> {
     const alertResult = await NotificationService.publishCaregiverAlert({
       patientName,
-      caregiverPhone,
+      caregiverPhone: caregiverPhone || 'caregiver contact not documented',
       dayNumber: submission.dayNumber,
       symptom: matchedWarning.condition,
       severity: matchedWarning.severity || 'high',
       documentedAction: matchedWarning.documentedAction,
-      sourcePage: matchedWarning.sourcePage || 5,
+      sourcePage: matchedWarning.sourcePage,
     });
 
     return {
@@ -121,7 +117,7 @@ export class CheckInService {
     );
     const targetDocId = activePlan?.documentId || submission.documentId || 'active';
     const warningSigns = activePlan?.warningSigns || [];
-    const matchedWarning = this.matchWarningSign(submission, warningSigns);
+    const { matchedWarning, unmatchedSymptoms } = this.evaluateWarningSigns(submission, warningSigns);
 
     const now = new Date();
     const formattedTime = `Today, ${now.toLocaleTimeString([], {
@@ -131,12 +127,12 @@ export class CheckInService {
 
     let snsResult;
     if (matchedWarning) {
-      const patientName = activePlan?.patient?.name || 'Patient';
-      const caregiverPhone =
-        activePlan?.patient?.caregiver?.phone ||
-        activePlan?.patient?.emergencyContact?.phone ||
-        '+1 (800) 555-0199';
-      snsResult = await this.sendSnsAlert(submission, matchedWarning, patientName, caregiverPhone);
+      snsResult = await this.sendSnsAlert(
+        submission,
+        matchedWarning,
+        activePlan?.patient?.name || 'Patient',
+        activePlan?.patient?.emergencyContact?.phone
+      );
     }
 
     const checkInRecord: CheckInRecordResponse = {
@@ -149,6 +145,7 @@ export class CheckInService {
       notes: submission.notes,
       warningMatched: Boolean(matchedWarning),
       matchedWarningSign: matchedWarning || undefined,
+      unmatchedSymptoms: unmatchedSymptoms.length > 0 ? unmatchedSymptoms : undefined,
       snsNotification: snsResult,
     };
 

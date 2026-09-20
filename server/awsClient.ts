@@ -67,6 +67,27 @@ export function isDemoMode(): boolean {
   return true;
 }
 
+/** BEDROCK_MODE=aws selects the Bedrock provider (which still needs real credentials to invoke). */
+export function isBedrockMode(): boolean {
+  return (process.env.BEDROCK_MODE || 'local').toLowerCase() === 'aws';
+}
+
+export function isTextractEnabled(): boolean {
+  return (process.env.TEXTRACT_MODE || 'local').toLowerCase() === 'aws' && isAwsCredentialsConfigured();
+}
+
+export const DEFAULT_BEDROCK_MODEL_ID = 'anthropic.claude-3-5-sonnet-20241022-v2:0';
+// Cross-region inference profile, for regions where the base model ID can't be invoked on demand
+export const FALLBACK_BEDROCK_MODEL_ID = 'us.anthropic.claude-3-5-sonnet-20241022-v2:0';
+
+/** Model IDs to try in order: BEDROCK_MODEL_ID (if set), then the default, then the inference profile. */
+export function getBedrockModelIds(): string[] {
+  const configured = process.env.BEDROCK_MODEL_ID?.trim();
+  return Array.from(
+    new Set([configured, DEFAULT_BEDROCK_MODEL_ID, FALLBACK_BEDROCK_MODEL_ID].filter((id): id is string => Boolean(id)))
+  );
+}
+
 /**
  * Factory for AWS SDK v3 S3 Client
  * Can target LocalStack or real AWS S3 via options or environment variables.
@@ -290,12 +311,12 @@ export function getAwsStatus(): AwsStatus {
     },
     s3Bucket: process.env.S3_BUCKET_NAME || 'carepath-documents',
     dynamoTable: process.env.DYNAMODB_TABLE_NAME || 'carepath-documents',
-    bedrockModel: process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+    bedrockModel: getBedrockModelIds()[0],
     snsTopicConfigured: Boolean(process.env.SNS_TOPIC_ARN),
     services: {
       s3: localStackConnectedCache ? 'connected' : 'demo_fallback',
-      textract: (process.env.TEXTRACT_MODE === 'aws' && isLiveAws) ? 'aws' : 'local',
-      bedrock: (process.env.BEDROCK_MODE === 'aws' && isLiveAws) ? 'aws' : 'fixture',
+      textract: isTextractEnabled() ? 'aws' : 'local',
+      bedrock: isBedrockMode() && isLiveAws ? 'aws' : 'fixture',
       dynamodb: localStackConnectedCache ? 'connected' : 'demo_fallback',
       sns: localStackConnectedCache ? 'connected' : 'demo_fallback',
     },

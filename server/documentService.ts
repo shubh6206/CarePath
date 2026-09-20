@@ -1,36 +1,29 @@
-import { PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
 import {
   DetectDocumentTextCommand,
 } from '@aws-sdk/client-textract';
 import {
-  InvokeModelCommand,
-} from '@aws-sdk/client-bedrock-runtime';
-import {
   PutCommand,
-  GetCommand,
-  QueryCommand,
 } from '@aws-sdk/lib-dynamodb';
 import {
   getS3,
   getTextract,
-  getBedrock,
   getDynamoDB,
   isAwsCredentialsConfigured,
-  isDemoMode,
+  isTextractEnabled,
 } from './awsClient';
 import {
   DocumentRecord,
-  DocumentStatus,
   TextractNormalizedOutput,
   TextractPage,
   BedrockRecoveryOutput,
   BedrockMedication,
   BedrockInstruction,
-  BedrockWarningSign,
-  BedrockFollowUp,
+  SourceCitation,
 } from './documentModel';
 import { LocalExtractionService } from './extraction/localExtractionService';
-import { getClinicalAIService } from './ai/clinicalAIService';
+import { getClinicalAIService, LocalClinicalAIProvider } from './ai/clinicalAIService';
+import { NOT_SPECIFIED } from './ai/recoveryOutputSchema';
 
 // In-memory document & recovery store (for sub-second lookups, dev mode, and demo mode)
 const inMemoryDocuments = new Map<string, DocumentRecord>();
@@ -38,107 +31,17 @@ const inMemoryPages = new Map<string, TextractNormalizedOutput>();
 const inMemoryPlans = new Map<string, any>();
 let activeDocumentId = 'doc-initial-demo';
 
-// Standard 5-page normalized text for fictional demo patient: Mrs. Anita Sharma
-export const FICTIONAL_DISCHARGE_PAGES: TextractPage[] = [
-  {
-    page_number: 1,
-    text: `APEX MEMORIAL HEALTHCARE SYSTEM
-Department of General & Laparoscopic Surgery
-PATIENT DISCHARGE SUMMARY
+// Curated timeline milestones for the demo packet only; uploaded documents get milestones they state
+const DEMO_MILESTONES: Record<number, string> = {
+  2: 'First 48-Hour Wound Rest & Gentle Ambulation',
+  3: 'Transition to Regular Soft Diet',
+  5: 'Antibiotic Regimen Completion Review',
+  7: 'Wound Dressing Assessment & Mobility Check',
+  14: 'Completion of Acute Post-Op Protocol',
+};
 
-Patient Name: Mrs. Anita Sharma
-Hospital MRN: #AMH-9921408
-Age / Gender: 58 Yrs / Female
-Date of Admission: September 15, 2026
-Date of Procedure: September 16, 2026 (08:30 AM)
-Date of Discharge: September 17, 2026 (14:00 PM)
-Attending Surgeon: Dr. Arvind Rao, MS, FACS
-Primary Caregiver: Pooja Sharma (Daughter, +1 800 555-0199)
-
-PRIMARY CLINICAL DIAGNOSIS:
-Symptomatic Cholelithiasis with recurrent biliary colic.
-
-OPERATIVE PROCEDURE PERFORMED:
-Elective Four-Port Laparoscopic Cholecystectomy.
-Operative course uneventful. Hemostasis secured. Gallbladder extracted intact via endobag.
-Histopathology specimen sent. No subhepatic drain placed.`,
-  },
-  {
-    page_number: 2,
-    text: `HOSPITAL COURSE & RECOVERY TIMELINE:
-Patient tolerated general anesthesia well. Extubated in OR.
-Post-op Day 0: Patient was monitored in recovery for 4 hours. Initiated oral sips of water at 6 hours post-op. Mild trocar site pain controlled with IV analgesics.
-Post-op Day 1: Ambulated in corridor. Passed flatus. Bowel sounds present. Oral liquids tolerated without nausea. Converted from IV to oral medications.
-Discharge Vitals:
-- Blood Pressure: 124/78 mmHg
-- Heart Rate: 72 bpm, regular
-- SpO2: 98% on room air
-- Temperature: 98.4°F (36.9°C)
-- Surgical wounds: Clean, dry, sterile micropore dressings intact.`,
-  },
-  {
-    page_number: 3,
-    text: `SECTION 3: DISCHARGE MEDICATIONS & DOSING SCHEDULE
-
-1. Tab. Cefuroxime Axetil 500 mg
-   - Dose: 500 mg oral tablet
-   - Frequency: Twice daily (every 12 hours: 8:00 AM and 8:00 PM)
-   - Duration: Complete for exactly 5 days post-discharge
-   - Instructions: Administer after meals with water. Do not skip doses.
-
-2. Tab. Paracetamol (Acetaminophen) 650 mg
-   - Dose: 650 mg oral tablet
-   - Frequency: Three times daily after meals as needed for mild-to-moderate incision pain
-   - Timing: 8:00 AM, 1:30 PM, 8:00 PM (or every 6-8 hours)
-   - Precaution: Do not exceed 3,000 mg in any 24-hour period.
-
-3. Tab. Pantoprazole 40 mg
-   - Dose: 40 mg oral tablet
-   - Frequency: Once daily at night 30 minutes before sleep
-   - Duration: 14 days for gastroprotection.`,
-  },
-  {
-    page_number: 4,
-    text: `SECTION 4: DIETARY INSTRUCTIONS
-- Maintain a low-fat, easily digestible diet for the first 10 days.
-- Avoid greasy, deep-fried foods, heavy creams, and spicy curries.
-- Small, frequent meals are better tolerated than heavy portions.
-- Maintain adequate hydration: 1.5 to 2 liters of fluids/water daily.
-
-SECTION 5: PHYSICAL ACTIVITY & RECOVERY GUIDELINES
-- Ambulation: Short walks of 5 to 10 minutes, 2 to 3 times daily starting Day 2.
-- Lifting restrictions: Strictly avoid lifting items heavier than 5 kg (10 lbs) for 4 weeks.
-- Driving: No driving for 7 days or while taking sedating analgesics.
-- Bathing: Keep umbilical and abdominal dressings dry for first 48 hours. Sponge bathing recommended.
-
-SECTION 6: OUTPATIENT CLINICAL FOLLOW-UP
-- Scheduled Review: Day 10 post-discharge (September 26, 2026 at 10:30 AM).
-- Location: Surgical OPD Clinic, Suite 402, Apex Memorial Healthcare.
-- Doctor: Dr. Arvind Rao. Contact: +1 (800) 555-0144.`,
-  },
-  {
-    page_number: 5,
-    text: `SECTION 7: EMERGENCY RED FLAGS & HOSPITAL ESCALATION PROTOCOL
-
-Patients and caregivers must inspect for the following documented warning signs. If observed, enact the specific documented action below immediately:
-
-1. DIFFICULTY BREATHING / CHEST PAIN:
-   - Signs: Shortness of breath, rapid shallow breathing, chest tightness, or pain upon deep inhalation.
-   - Documented Action: Call the hospital emergency line immediately (+1 800 555-0199) or proceed to the nearest Emergency Room. Do not wait.
-
-2. PERSISTENT FEVER:
-   - Signs: Body temperature greater than 101.0°F (38.3°C) or severe chills/rigors.
-   - Documented Action: Contact the surgical post-op duty team within 2 hours at +1 (800) 555-0144.
-
-3. SEVERE OR ESCALATING PAIN:
-   - Signs: Abdominal pain that progressively worsens despite prescribed pain medication, or abdominal wall becomes rigid and tender.
-   - Documented Action: Call the 24/7 post-op nurse coordinator immediately.
-
-4. WOUND DRAINAGE / JAUNDICE:
-   - Signs: Active bleeding soaking dressings, yellowing of eyes/skin, or foul odor from incision sites.
-   - Documented Action: Prompt hospital evaluation required within 4 hours.`,
-  },
-];
+const normalizeForCitation = (text: string) =>
+  text.normalize('NFKC').replace(/\s+/g, ' ').trim().toLowerCase();
 
 export class DocumentService {
   /**
@@ -210,7 +113,7 @@ export class DocumentService {
 
     let pages: TextractPage[] = [];
 
-    if (isAwsCredentialsConfigured() && fileBuffer && !record?.is_demo) {
+    if (isTextractEnabled() && fileBuffer && !record?.is_demo) {
       try {
         const textract = getTextract();
         const response = await textract.send(
@@ -271,7 +174,8 @@ export class DocumentService {
   }
 
   /**
-   * 3. Structure with Amazon Bedrock using strict prompt
+   * 3. Structure with the configured clinical AI provider (Amazon Bedrock when BEDROCK_MODE=aws).
+   * The verified demo fixture is used only for documents explicitly flagged isDemo.
    */
   static async structureWithBedrock(
     documentId: string,
@@ -283,210 +187,51 @@ export class DocumentService {
       record.updated_at = new Date().toISOString();
     }
 
-    const systemPrompt = `You are a medical-document structuring assistant.
-Extract ONLY information explicitly present in the supplied discharge document.
-Do not diagnose.
-Do not infer missing information.
-Do not invent medication names, doses, frequencies, warning signs, follow-ups, or medical advice.
-Preserve source page references for every clinically important extracted instruction.
-If information is absent or ambiguous, return null or 'Not specified'.
-Return valid JSON matching the supplied schema.`;
-
-    const userPrompt = `Discharge document pages extracted via Amazon Textract:
-${JSON.stringify(textractOutput.pages, null, 2)}
-
-Strict JSON Schema to return:
-{
-  "patient": {
-    "name": "string or null",
-    "age": "number or null",
-    "procedure": "string or null",
-    "discharge_date": "string or null",
-    "attending_physician": "string or null",
-    "hospital_name": "string or null"
-  },
-  "recovery_period_days": 14,
-  "medications": [
-    {
-      "name": "Medication Name",
-      "dose": "500 mg",
-      "frequency": "Twice daily",
-      "timing": "8:00 AM",
-      "instructions": "Take after meals",
-      "source_page": 3,
-      "source_section": "Section 3: Discharge Medications",
-      "original_extracted_text": "verbatim text from source_page"
-    }
-  ],
-  "followups": [
-    {
-      "title": "Surgical Follow-up",
-      "date": "September 26, 2026",
-      "time": "10:30 AM",
-      "doctor": "Dr. Arvind Rao",
-      "location": "Surgical OPD Clinic",
-      "day_number": 10,
-      "source_page": 4,
-      "source_section": "Section 6: Outpatient Clinical Follow-up",
-      "original_extracted_text": "verbatim text from source_page"
-    }
-  ],
-  "instructions": [
-    {
-      "title": "Gentle Walking",
-      "category": "activity",
-      "timing": "11:00 AM",
-      "duration": "10 mins",
-      "instructions": "Walk slowly inside home",
-      "source_page": 4,
-      "source_section": "Section 5: Physical Activity & Recovery Guidelines",
-      "original_extracted_text": "verbatim text from source_page"
-    }
-  ],
-  "warning_signs": [
-    {
-      "condition": "Difficulty breathing or shortness of breath",
-      "trigger_key": "breathing",
-      "severity": "urgent",
-      "documented_action": "Call hospital immediately (+1 800 555-0199) or report to ER",
-      "source_page": 5,
-      "source_section": "Section 7: Emergency Red Flags",
-      "original_extracted_text": "verbatim text from source_page"
-    }
-  ]
-}`;
-
-    let parsedResult: BedrockRecoveryOutput;
-
-    if (isAwsCredentialsConfigured() && !record?.is_demo) {
-      try {
-        const bedrock = getBedrock();
-        const modelId = process.env.BEDROCK_MODEL_ID || 'anthropic.claude-3-5-sonnet-20240620-v1:0';
-
-        const payload = {
-          anthropic_version: 'bedrock-2023-05-31',
-          max_tokens: 4096,
-          temperature: 0,
-          system: systemPrompt,
-          messages: [
-            {
-              role: 'user',
-              content: [{ type: 'text', text: userPrompt }],
-            },
-          ],
-        };
-
-        const response = await bedrock.send(
-          new InvokeModelCommand({
-            modelId,
-            contentType: 'application/json',
-            accept: 'application/json',
-            body: new TextEncoder().encode(JSON.stringify(payload)),
-          })
-        );
-
-        const decoded = JSON.parse(new TextDecoder().decode(response.body));
-        const rawText = decoded.content?.[0]?.text || '';
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          parsedResult = JSON.parse(jsonMatch[0]);
-        } else {
-          throw new Error('No valid JSON returned from Bedrock model');
-        }
-      } catch (err) {
-        console.warn('[AWS Bedrock] Bedrock unavailable, using Local Clinical AI Provider:', (err as Error).message);
-        const clinicalAi = getClinicalAIService();
-        parsedResult = await clinicalAi.structureDischargeDocument(textractOutput);
-      }
-    } else {
-      const clinicalAi = getClinicalAIService();
-      parsedResult = await clinicalAi.structureDischargeDocument(textractOutput);
+    if (record?.is_demo) {
+      console.log('[DocumentService] Demo packet requested, using verified demo fixture');
+      return LocalClinicalAIProvider.getVerifiedDemoOutput();
     }
 
-    return parsedResult;
+    return getClinicalAIService().structureDischargeDocument(textractOutput);
   }
 
   /**
    * 4. Strict Safety Check & Textract Verbatim Verification
-   * Ensures that EVERY citation originates verbatim from the verified Textract page.
+   * A citation is VERIFIED only when its quote appears on the cited page (ignoring case and
+   * whitespace). Anything else is flagged UNVERIFIED with the quote left exactly as returned.
    */
   static validateAndVerifyVerbatimQuotes(
     bedrockOutput: BedrockRecoveryOutput,
     textractOutput: TextractNormalizedOutput
   ): BedrockRecoveryOutput {
-    const pagesMap = new Map<number, string>();
-    for (const p of textractOutput.pages) {
-      pagesMap.set(p.page_number, p.text);
-    }
+    const normalizedPages = new Map(
+      textractOutput.pages.map((p) => [p.page_number, normalizeForCitation(p.text)])
+    );
 
-    // Helper to find verbatim quote or closest exact sentence in source page
-    const verifyAndAlignQuote = (sourcePage: number, quote: string | undefined): string => {
-      const pageText = pagesMap.get(sourcePage) || '';
-      if (!quote || quote.trim().length === 0) {
-        return pageText.split('\n')[0] || 'Verified source page text';
+    const citedItems: SourceCitation[] = [
+      ...bedrockOutput.medications,
+      ...bedrockOutput.followups,
+      ...bedrockOutput.instructions,
+      ...bedrockOutput.warning_signs,
+    ];
+
+    for (const item of citedItems) {
+      const quote = normalizeForCitation(item.original_extracted_text ?? '');
+      if (quote && normalizedPages.get(item.source_page)?.includes(quote)) {
+        item.citation_status = 'VERIFIED';
+        item.confidence = 1.0;
+        item.verification_note = undefined;
+      } else {
+        item.citation_status = 'UNVERIFIED';
+        item.confidence = 0.0;
+        item.verification_note = `Exact wording could not be confirmed on Page ${item.source_page}.`;
       }
-
-      // Check if page contains the exact quote
-      if (pageText.toLowerCase().includes(quote.toLowerCase())) {
-        return quote;
-      }
-
-      // If Bedrock slightly normalized, find the sentence in the page with highest lexical overlap
-      const sentences = pageText
-        .split(/(?:\r?\n)+/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 10);
-
-      const quoteLower = quote.toLowerCase();
-      let bestMatch = sentences[0] || pageText.substring(0, 100);
-      let highestOverlap = 0;
-
-      for (const sentence of sentences) {
-        const words = sentence.toLowerCase().split(/\W+/);
-        let overlap = 0;
-        for (const w of words) {
-          if (w.length > 3 && quoteLower.includes(w)) overlap++;
-        }
-        if (overlap > highestOverlap) {
-          highestOverlap = overlap;
-          bestMatch = sentence;
-        }
-      }
-
-      return bestMatch;
-    };
-
-    // Verify all medications
-    for (const med of bedrockOutput.medications) {
-      med.original_extracted_text = verifyAndAlignQuote(
-        med.source_page,
-        med.original_extracted_text
-      );
     }
 
-    // Verify followups
-    for (const fu of bedrockOutput.followups) {
-      fu.original_extracted_text = verifyAndAlignQuote(
-        fu.source_page,
-        fu.original_extracted_text
-      );
-    }
-
-    // Verify instructions
-    for (const inst of bedrockOutput.instructions) {
-      inst.original_extracted_text = verifyAndAlignQuote(
-        inst.source_page,
-        inst.original_extracted_text
-      );
-    }
-
-    // Verify warning signs
-    for (const ws of bedrockOutput.warning_signs) {
-      ws.original_extracted_text = verifyAndAlignQuote(
-        ws.source_page,
-        ws.original_extracted_text
-      );
-    }
+    const unverified = citedItems.filter((item) => item.citation_status === 'UNVERIFIED').length;
+    console.log(
+      `[DocumentService] Citation check: ${citedItems.length - unverified} verified, ${unverified} unverified`
+    );
 
     return bedrockOutput;
   }
@@ -505,81 +250,120 @@ Strict JSON Schema to return:
       record.updated_at = new Date().toISOString();
     }
 
+    const isDemo = record?.is_demo ?? false;
+    const documentName = record?.filename || 'Hospital Discharge Summary & Post-Op Plan';
+    const { patient } = validatedPlan;
+    const followUp = validatedPlan.followups[0];
+    const totalDays = validatedPlan.recovery_period_days || 14;
+
+    const toEvidence = (item: SourceCitation, defaultSection: string) => ({
+      documentId,
+      documentName,
+      sourcePage: item.source_page,
+      section: item.source_section || defaultSection,
+      originalText: item.original_extracted_text ?? '',
+      citationStatus: item.citation_status ?? 'UNVERIFIED',
+      confidence: item.confidence ?? 0,
+      verificationNote: item.verification_note,
+    });
+
+    const toMedicationTask = (m: BedrockMedication, idx: number, id: string, completed: boolean) => ({
+      id,
+      name: m.name,
+      dose: m.dose,
+      frequency: m.frequency,
+      timing: m.timing || NOT_SPECIFIED,
+      instructions: m.instructions,
+      completed,
+      pillColor: idx === 0 || idx === 2 ? '#3B82F6' : idx === 1 ? '#F97316' : '#10B981',
+      pillShape: (idx === 0 || idx === 2 ? 'capsule' : idx === 1 ? 'oval' : 'round') as any,
+      evidence: toEvidence(m, 'Discharge Medications'),
+    });
+
+    const toActivityTask = (inst: BedrockInstruction, id: string, completed: boolean) => ({
+      id,
+      title: inst.title,
+      timing: inst.timing || NOT_SPECIFIED,
+      duration: inst.duration,
+      instructions: inst.instructions,
+      completed,
+      category: inst.category,
+      evidence: toEvidence(inst, 'Recovery Guidelines'),
+    });
+
+    const milestoneFor = (dayNumber: number): string | undefined => {
+      if (dayNumber === 1) return 'Hospital Discharge & Home Transition';
+      if (followUp && followUp.day_number === dayNumber) return followUp.title;
+      return isDemo ? DEMO_MILESTONES[dayNumber] : undefined;
+    };
+
+    // Calculate dynamic recovery day from discharge date if available
+    let dynamicCurrentDay = isDemo ? 2 : 1;
+    if (patient.discharge_date && patient.discharge_date !== NOT_SPECIFIED) {
+      const parsedDischarge = Date.parse(patient.discharge_date);
+      if (!isNaN(parsedDischarge)) {
+        const dischargeMidnight = new Date(parsedDischarge);
+        dischargeMidnight.setHours(0, 0, 0, 0);
+        const nowMidnight = new Date();
+        nowMidnight.setHours(0, 0, 0, 0);
+        const diffMs = nowMidnight.getTime() - dischargeMidnight.getTime();
+        const elapsedDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+        // Day of discharge is Day 1
+        const calculatedDay = elapsedDays + 1;
+        if (calculatedDay >= 1 && calculatedDay <= totalDays) {
+          dynamicCurrentDay = calculatedDay;
+        } else if (calculatedDay < 1) {
+          dynamicCurrentDay = 1;
+        } else {
+          dynamicCurrentDay = Math.min(totalDays, calculatedDay);
+        }
+      }
+    }
+
     // Transform into frontend-ready shape
     const fullRecoveryPayload = {
       documentId,
       patient: {
         id: 'pt-' + documentId,
-        name: validatedPlan.patient.name || 'Patient Record',
-        age: validatedPlan.patient.age || 58,
-        diagnosis: validatedPlan.patient.diagnosis || 'Post-Operative Recovery',
-        procedure: validatedPlan.patient.procedure || 'Clinical Procedure',
-        dischargeDate: validatedPlan.patient.discharge_date || 'Recent Discharge',
-        currentDay: 2,
-        totalDays: validatedPlan.recovery_period_days || 14,
-        hospitalName: validatedPlan.patient.hospital_name || 'Regional Healthcare System',
-        attendingPhysician: validatedPlan.patient.attending_physician || 'Attending Physician',
-        caregiverName: validatedPlan.patient.caregiver || 'Primary Caregiver',
-        emergencyContact: validatedPlan.patient.emergency_contact || {
-          name: 'Emergency Contact',
-          relationship: 'Family',
-          phone: '+1 (800) 555-0199',
+        name: patient.name || 'Patient Record',
+        mrn: patient.mrn || undefined,
+        age: patient.age ?? null,
+        diagnosis: patient.diagnosis || NOT_SPECIFIED,
+        procedure: patient.procedure || NOT_SPECIFIED,
+        dischargeDate: patient.discharge_date || NOT_SPECIFIED,
+        currentDay: dynamicCurrentDay,
+        totalDays,
+        hospitalName: patient.hospital_name || NOT_SPECIFIED,
+        attendingPhysician: patient.attending_physician || NOT_SPECIFIED,
+        caregiverName: patient.caregiver || patient.emergency_contact?.name || NOT_SPECIFIED,
+        // Contact numbers only ever come from the document; empty means "not documented"
+        emergencyContact: {
+          name: patient.emergency_contact?.name || NOT_SPECIFIED,
+          relationship: patient.emergency_contact?.relationship || '',
+          phone: patient.emergency_contact?.phone || '',
         },
-        hospitalHelpline: validatedPlan.patient.hospital_helpline || '+1 (800) 555-0144 (Ext 4)',
-        isDemo: record?.is_demo ?? false,
+        hospitalHelpline: patient.hospital_helpline || '',
+        isDemo,
       },
-      medications: validatedPlan.medications.map((m, idx) => ({
-        id: `med-dyn-${idx + 1}`,
-        name: m.name,
-        dose: m.dose,
-        frequency: m.frequency,
-        timing: m.timing || '8:00 AM',
-        instructions: m.instructions,
-        completed: idx === 0, // day 2 morning dose marked completed as demo
-        pillColor: idx === 0 || idx === 2 ? '#3B82F6' : idx === 1 ? '#F97316' : '#10B981',
-        pillShape: (idx === 0 || idx === 2 ? 'capsule' : idx === 1 ? 'oval' : 'round') as any,
-        evidence: {
-          documentId,
-          documentName: record?.filename || 'Hospital Discharge Summary & Post-Op Plan',
-          sourcePage: m.source_page,
-          section: m.source_section || 'Section 3: Discharge Medications',
-          originalText: m.original_extracted_text || m.name,
-        },
-      })),
-      activities: validatedPlan.instructions.map((inst, idx) => ({
-        id: `act-dyn-${idx + 1}`,
-        title: inst.title,
-        timing: inst.timing || '1:00 PM',
-        duration: inst.duration,
-        instructions: inst.instructions,
-        completed: idx === 0,
-        category: inst.category,
-        evidence: {
-          documentId,
-          documentName: record?.filename || 'Hospital Discharge Summary & Post-Op Plan',
-          sourcePage: inst.source_page,
-          section: inst.source_section || 'Section 5: Physical Activity & Recovery Guidelines',
-          originalText: inst.original_extracted_text || inst.instructions,
-        },
-      })),
-      followUp: validatedPlan.followups[0]
+      // Demo packet starts with the Day 2 morning dose/activity marked done
+      medications: validatedPlan.medications.map((m, idx) =>
+        toMedicationTask(m, idx, `med-dyn-${idx + 1}`, isDemo && idx === 0)
+      ),
+      activities: validatedPlan.instructions.map((inst, idx) =>
+        toActivityTask(inst, `act-dyn-${idx + 1}`, isDemo && idx === 0)
+      ),
+      followUp: followUp
         ? {
             id: 'fu-dyn-01',
-            title: validatedPlan.followups[0].title,
-            date: validatedPlan.followups[0].date,
-            time: validatedPlan.followups[0].time,
-            doctor: validatedPlan.followups[0].doctor,
-            location: validatedPlan.followups[0].location,
-            contactNumber: '+1 (800) 555-0144',
-            notes: 'Bring surgical discharge summary and list of medications.',
-            dayNumber: validatedPlan.followups[0].day_number,
-            evidence: {
-              documentId,
-              documentName: record?.filename || 'Hospital Discharge Summary & Post-Op Plan',
-              sourcePage: validatedPlan.followups[0].source_page,
-              section: validatedPlan.followups[0].source_section || 'Section 6: Outpatient Clinical Follow-up',
-              originalText: validatedPlan.followups[0].original_extracted_text || validatedPlan.followups[0].title,
-            },
+            title: followUp.title,
+            date: followUp.date,
+            time: followUp.time,
+            doctor: followUp.doctor,
+            location: followUp.location,
+            contactNumber: followUp.contact_number || patient.hospital_helpline || '',
+            notes: followUp.instructions || '',
+            dayNumber: followUp.day_number,
+            evidence: toEvidence(followUp, 'Outpatient Clinical Follow-up'),
           }
         : null,
       warningSigns: validatedPlan.warning_signs.map((ws, idx) => ({
@@ -589,13 +373,7 @@ Strict JSON Schema to return:
         severity: ws.severity,
         documentedAction: ws.documented_action,
         sourcePage: ws.source_page,
-        evidence: {
-          documentId,
-          documentName: record?.filename || 'Hospital Discharge Summary & Post-Op Plan',
-          sourcePage: ws.source_page,
-          section: ws.source_section || 'Section 7: Emergency Red Flags & Escalation',
-          originalText: ws.original_extracted_text || ws.documented_action,
-        },
+        evidence: toEvidence(ws, 'Emergency Red Flags & Escalation'),
       })),
       pages: textractOutput.pages.map((p) => {
         let title = `Discharge Summary — Page ${p.page_number}`;
@@ -613,66 +391,27 @@ Strict JSON Schema to return:
           highlights: [],
         };
       }),
-      plans: Array.from({ length: validatedPlan.recovery_period_days || 14 }, (_, i) => {
+      plans: Array.from({ length: totalDays }, (_, i) => {
         const dayNumber = i + 1;
-        const isToday = dayNumber === 2;
-        const isPast = dayNumber < 2;
-
-        let milestoneTitle: string | undefined;
-        if (dayNumber === 1) milestoneTitle = 'Hospital Discharge & Home Transition';
-        else if (dayNumber === 2) milestoneTitle = 'First 48-Hour Wound Rest & Gentle Ambulation';
-        else if (dayNumber === 3) milestoneTitle = 'Transition to Regular Soft Diet';
-        else if (dayNumber === 5) milestoneTitle = 'Antibiotic Regimen Completion Review';
-        else if (dayNumber === 7) milestoneTitle = 'Wound Dressing Assessment & Mobility Check';
-        else if (dayNumber === (validatedPlan.followups[0]?.day_number || 10)) {
-          milestoneTitle = validatedPlan.followups[0]?.title || 'Outpatient Clinical Follow-up';
-        } else if (dayNumber === 14) milestoneTitle = 'Completion of Acute Post-Op Protocol';
-
-        const dayMedications = validatedPlan.medications.map((m, idx) => ({
-          id: `med-day${dayNumber}-${idx + 1}`,
-          name: m.name,
-          dose: m.dose,
-          frequency: m.frequency,
-          timing: m.timing || (idx === 0 ? '8:00 AM' : idx === 1 ? '1:30 PM' : '8:00 PM'),
-          instructions: m.instructions,
-          completed: isPast || (isToday && idx === 0),
-          pillColor: idx === 0 || idx === 2 ? '#3B82F6' : idx === 1 ? '#F97316' : '#10B981',
-          pillShape: (idx === 0 || idx === 2 ? 'capsule' : idx === 1 ? 'oval' : 'round') as any,
-          evidence: {
-            documentId,
-            documentName: record?.filename || 'Hospital Discharge Summary & Post-Op Plan',
-            sourcePage: m.source_page,
-            section: m.source_section || 'Section 3: Discharge Medications',
-            originalText: m.original_extracted_text || m.name,
-          },
-        }));
-
-        const dayActivities = validatedPlan.instructions.map((inst, idx) => ({
-          id: `act-day${dayNumber}-${idx + 1}`,
-          title: inst.title,
-          timing: inst.timing || '11:00 AM',
-          duration: inst.duration,
-          instructions: inst.instructions,
-          completed: isPast,
-          category: inst.category,
-          evidence: {
-            documentId,
-            documentName: record?.filename || 'Hospital Discharge Summary & Post-Op Plan',
-            sourcePage: inst.source_page,
-            section: inst.source_section || 'Section 5: Physical Activity & Recovery Guidelines',
-            originalText: inst.original_extracted_text || inst.instructions,
-          },
-        }));
+        const isToday = dayNumber === dynamicCurrentDay;
+        const isPast = dayNumber < dynamicCurrentDay;
 
         return {
           dayNumber,
-          dateLabel: isToday ? 'Today' : isPast ? 'Yesterday' : `Day ${dayNumber}`,
+          dateLabel: isToday ? 'Today' : isPast ? (dayNumber === dynamicCurrentDay - 1 ? 'Yesterday' : `Day ${dayNumber}`) : `Day ${dayNumber}`,
           isToday,
           isPast,
-          milestoneTitle,
-          medications: dayMedications,
-          activities: dayActivities,
-          notes: isToday ? 'Focus on resting, taking medications with meals, and light ambulation.' : undefined,
+          milestoneTitle: milestoneFor(dayNumber),
+          medications: validatedPlan.medications.map((m, idx) =>
+            toMedicationTask(m, idx, `med-day${dayNumber}-${idx + 1}`, isPast || (isDemo && isToday && idx === 0))
+          ),
+          activities: validatedPlan.instructions.map((inst, idx) =>
+            toActivityTask(inst, `act-day${dayNumber}-${idx + 1}`, isPast)
+          ),
+          notes:
+            isDemo && isToday
+              ? 'Focus on resting, taking medications with meals, and light ambulation.'
+              : undefined,
         };
       }),
     };
@@ -726,26 +465,31 @@ Strict JSON Schema to return:
     // 1. Ingestion & S3 Upload
     const record = await this.createAndUpload(filename, fileBuffer, isDemo);
 
-    // 2. Textract extraction
-    const textractOutput = await this.extractTextWithTextract(record.id, fileBuffer);
+    try {
+      // 2. Textract extraction
+      const textractOutput = await this.extractTextWithTextract(record.id, fileBuffer);
 
-    // 3. Bedrock structuring
-    const bedrockOutput = await this.structureWithBedrock(record.id, textractOutput);
+      // 3. Bedrock structuring
+      const bedrockOutput = await this.structureWithBedrock(record.id, textractOutput);
 
-    // 4. JSON Validation & Textract Verbatim Quotation Verification
-    if (record) {
+      // 4. JSON Validation & Textract Verbatim Quotation Verification
       record.status = 'VALIDATING';
       record.updated_at = new Date().toISOString();
+      const verifiedOutput = this.validateAndVerifyVerbatimQuotes(bedrockOutput, textractOutput);
+
+      // 5. DynamoDB Persistence
+      const savedPlan = await this.persistRecoveryPlan(record.id, verifiedOutput, textractOutput);
+
+      return {
+        document: record,
+        recoveryPlan: savedPlan,
+      };
+    } catch (err) {
+      record.status = 'ERROR';
+      record.error = (err as Error).message;
+      record.updated_at = new Date().toISOString();
+      throw err;
     }
-    const verifiedOutput = this.validateAndVerifyVerbatimQuotes(bedrockOutput, textractOutput);
-
-    // 5. DynamoDB Persistence
-    const savedPlan = await this.persistRecoveryPlan(record.id, verifiedOutput, textractOutput);
-
-    return {
-      document: record,
-      recoveryPlan: savedPlan,
-    };
   }
 
   static getDocumentRecord(documentId: string): DocumentRecord | undefined {
@@ -774,137 +518,5 @@ Strict JSON Schema to return:
 
   static getDocumentPages(documentId: string): TextractNormalizedOutput | undefined {
     return inMemoryPages.get(documentId);
-  }
-
-  /**
-   * Verified baseline structured output for demo mode
-   */
-  static getStandardBedrockOutput(): BedrockRecoveryOutput {
-    return {
-      patient: {
-        name: 'Mrs. Anita Sharma',
-        age: 58,
-        procedure: 'Elective Laparoscopic Cholecystectomy',
-        discharge_date: 'September 17, 2026',
-        attending_physician: 'Dr. Arvind Rao, MS, FACS',
-        hospital_name: 'Apex Memorial Healthcare',
-      },
-      recovery_period_days: 14,
-      medications: [
-        {
-          name: 'Cefuroxime Axetil',
-          dose: '500 mg',
-          frequency: 'Twice daily',
-          timing: '8:00 AM',
-          instructions: 'Take 1 tablet after breakfast with water. Complete 5-day course.',
-          source_page: 3,
-          source_section: 'Section 3: Discharge Medications & Dosing Schedule',
-          original_extracted_text: 'Tab. Cefuroxime Axetil 500 mg PO BID (8:00 AM, 8:00 PM) for 5 days. Administer with meals to prevent gastrointestinal upset.',
-        },
-        {
-          name: 'Paracetamol (Acetaminophen)',
-          dose: '650 mg',
-          frequency: 'Three times daily after meals',
-          timing: '1:30 PM',
-          instructions: 'Take 1 tablet after lunch for surgical incision soreness.',
-          source_page: 3,
-          source_section: 'Section 3: Discharge Medications & Dosing Schedule',
-          original_extracted_text: 'Tab. Paracetamol 650 mg PO TID (after meals) PRN for pain control. Do not exceed 3,000 mg in 24 hours.',
-        },
-        {
-          name: 'Cefuroxime Axetil',
-          dose: '500 mg',
-          frequency: 'Evening dose',
-          timing: '8:00 PM',
-          instructions: 'Take 1 tablet after dinner with water.',
-          source_page: 3,
-          source_section: 'Section 3: Discharge Medications & Dosing Schedule',
-          original_extracted_text: 'Tab. Cefuroxime Axetil 500 mg PO BID (8:00 AM, 8:00 PM) for 5 days. Complete prescribed course strictly.',
-        },
-        {
-          name: 'Pantoprazole',
-          dose: '40 mg',
-          frequency: 'Once daily at bedtime',
-          timing: '9:30 PM',
-          instructions: 'Take 1 tablet 30 minutes before sleep for acid suppression.',
-          source_page: 3,
-          source_section: 'Section 3: Discharge Medications & Dosing Schedule',
-          original_extracted_text: 'Tab. Pantoprazole 40 mg PO once daily at bedtime for 14 days.',
-        },
-      ],
-      followups: [
-        {
-          title: 'Post-Operative Surgical Review & Suture Check',
-          date: 'September 26, 2026 (Day 10)',
-          time: '10:30 AM',
-          doctor: 'Dr. Arvind Rao, MS',
-          location: 'Surgical OPD Clinic, Suite 402, Apex Memorial',
-          day_number: 10,
-          source_page: 4,
-          source_section: 'Section 6: Outpatient Clinical Follow-up',
-          original_extracted_text: 'Scheduled Review: Day 10 post-discharge (September 26, 2026 at 10:30 AM). Location: Surgical OPD Clinic, Suite 402, Apex Memorial Healthcare.',
-        },
-      ],
-      instructions: [
-        {
-          title: 'Gentle Indoor Walk (10 minutes)',
-          category: 'activity',
-          timing: '11:00 AM',
-          duration: '10 mins',
-          instructions: 'Walk slowly on flat ground inside the house. Stop if dizzy.',
-          source_page: 4,
-          source_section: 'Section 5: Physical Activity & Recovery Guidelines',
-          original_extracted_text: 'Early mobilization advised: Short walks of 5–10 minutes 2–3 times daily starting Day 2 post-op to promote bowel motility and prevent venous stasis.',
-        },
-        {
-          title: 'Low-Fat, Bland Lunch & Hydration',
-          category: 'diet',
-          timing: '1:00 PM',
-          instructions: 'Eat easily digestible meals (steamed vegetables, rice). Drink 250ml warm water.',
-          source_page: 4,
-          source_section: 'Section 4: Dietary Instructions',
-          original_extracted_text: 'Maintain a low-fat, easily digestible diet for the first 10 days. Avoid greasy, deep-fried foods, heavy creams, and spicy curries.',
-        },
-        {
-          title: 'Afternoon Rest & Elevation',
-          category: 'rest',
-          timing: '2:30 PM',
-          duration: '45 mins',
-          instructions: 'Rest in a semi-reclined position with pillows supporting the back.',
-          source_page: 4,
-          source_section: 'Section 5: Physical Activity & Recovery Guidelines',
-          original_extracted_text: 'Adequate daytime rest intervals recommended. Sleep in comfortable semi-fowler position if abdominal discomfort occurs.',
-        },
-      ],
-      warning_signs: [
-        {
-          condition: 'Difficulty breathing or sudden shortness of breath',
-          trigger_key: 'breathing',
-          severity: 'urgent',
-          documented_action: 'Call the hospital emergency line immediately (+1 800 555-0199) or proceed to the nearest Emergency Room. Do not wait.',
-          source_page: 5,
-          source_section: 'Section 7: Emergency Red Flags & Hospital Escalation Protocol',
-          original_extracted_text: 'DIFFICULTY BREATHING / CHEST PAIN: Signs: Shortness of breath, rapid shallow breathing, chest tightness, or pain upon deep inhalation. Documented Action: Call the hospital emergency line immediately (+1 800 555-0199) or proceed to the nearest Emergency Room.',
-        },
-        {
-          condition: 'Persistent high fever (>101°F / 38.3°C) with chills',
-          trigger_key: 'fever',
-          severity: 'high',
-          documented_action: 'Notify the surgical post-op duty team within 2 hours at +1 (800) 555-0144.',
-          source_page: 5,
-          source_section: 'Section 7: Emergency Red Flags & Hospital Escalation Protocol',
-          original_extracted_text: 'PERSISTENT FEVER: Signs: Body temperature greater than 101.0°F (38.3°C) or severe chills/rigors. Documented Action: Contact the surgical post-op duty team within 2 hours at +1 (800) 555-0144.',
-        },
-        {
-          condition: 'Severe or worsening abdominal pain unresponsive to prescribed medications',
-          trigger_key: 'pain_worse',
-          severity: 'high',
-          documented_action: 'Call the 24/7 post-op nurse coordinator immediately.',
-          source_page: 5,
-          source_section: 'Section 7: Emergency Red Flags & Hospital Escalation Protocol',
-          original_extracted_text: 'SEVERE OR ESCALATING PAIN: Signs: Abdominal pain that progressively worsens despite prescribed pain medication. Documented Action: Call the 24/7 post-op nurse coordinator immediately.',
-        },
-      ],
-    };
   }
 }

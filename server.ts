@@ -7,10 +7,13 @@ import {
   checkLocalStackConnectivity,
   getLocalStackEndpoint,
   isAwsCredentialsConfigured,
+  isLocalStackMode,
+  isTextractEnabled,
 } from './server/awsClient';
 import { DocumentService } from './server/documentService';
 import { CheckInService } from './server/checkInService';
 import { NotificationService } from './server/notification/notificationService';
+import { getClinicalAIStatus } from './server/ai/clinicalAIService';
 
 async function startServer() {
   const app = express();
@@ -33,17 +36,19 @@ async function startServer() {
   const buildHealthPayload = async () => {
     const isLocalStackUp = await checkLocalStackConnectivity();
     const isLiveAws = isAwsCredentialsConfigured();
+    const storageOnAws = !isLocalStackMode();
 
     return {
       status: 'ok',
       environment: isLiveAws ? 'aws' : 'local',
       timestamp: new Date().toISOString(),
       services: {
-        s3: isLocalStackUp ? 'connected' : 'local_storage',
-        dynamodb: isLocalStackUp ? 'connected' : 'local_database',
+        s3: storageOnAws ? 'aws' : isLocalStackUp ? 'connected' : 'local_storage',
+        dynamodb: storageOnAws ? 'aws' : isLocalStackUp ? 'connected' : 'local_database',
+        // Caregiver alerts publish through LocalStack SNS or the local simulator
         sns: isLocalStackUp ? 'connected' : 'local_notifications',
-        clinicalAI: process.env.GEMINI_API_KEY ? 'gemini_active' : 'deterministic_nlp',
-        extraction: 'local_pdf_parse',
+        clinicalAI: getClinicalAIStatus(),
+        extraction: isTextractEnabled() ? 'amazon_textract' : 'local_pdf_parse',
       },
       activeMode: isLiveAws
         ? 'LIVE_AWS_SERVICES'
@@ -96,7 +101,7 @@ async function startServer() {
   });
 
   // 2. Upload Document & Ingest Pipeline (Supports both multipart/form-data and JSON base64)
-  app.post('/api/documents/upload', upload.single('file'), async (req, res) => {
+  app.post('/api/documents/upload', upload.single('file') as any, async (req: any, res: any) => {
     try {
       let filename = 'discharge_instructions.pdf';
       let buffer: Buffer | undefined;
@@ -115,6 +120,17 @@ async function startServer() {
           const cleanBase64 = body.fileBase64.replace(/^data:[^;]+;base64,/, '');
           buffer = Buffer.from(cleanBase64, 'base64');
         }
+      }
+
+      const hasFile = Boolean(buffer && buffer.length > 0);
+      if (isDemo && hasFile) {
+        return res.status(400).json({
+          success: false,
+          error: 'isDemo loads the built-in demo packet and cannot be combined with an uploaded file',
+        });
+      }
+      if (!isDemo && !hasFile) {
+        return res.status(400).json({ success: false, error: 'No document file was provided' });
       }
 
       const result = await DocumentService.runEndToEndPipeline(
@@ -233,10 +249,20 @@ async function startServer() {
     res.json(NotificationService.getAlertHistory());
   });
 
-  // 9. SNS Notification Trigger Test
+  // 9. SNS Notification Trigger Test (uses the active plan's documented warning sign)
   app.post('/api/alerts/sns-test', async (req, res) => {
     try {
-      const { symptom = 'Difficulty breathing', day = 2 } = req.body;
+      const { day = 2 } = req.body;
+      const plan = DocumentService.getRecoveryPlan('active');
+      const warningSign =
+        plan?.warningSigns?.find((w: any) => w.triggerKey === 'breathing') ?? plan?.warningSigns?.[0];
+      if (!warningSign) {
+        return res.status(409).json({
+          success: false,
+          error: 'The active recovery plan has no documented warning signs to test with',
+        });
+      }
+
       const result = await CheckInService.sendSnsAlert(
         {
           dayNumber: day,
@@ -244,12 +270,9 @@ async function startServer() {
           fever: 'no',
           breathing: 'difficult',
         },
-        {
-          condition: symptom,
-          documentedAction:
-            'Call the hospital emergency line immediately (+1 800 555-0199) or proceed to Emergency Room.',
-          sourcePage: 5,
-        }
+        warningSign,
+        plan.patient?.name,
+        plan.patient?.emergencyContact?.phone
       );
 
       res.json({

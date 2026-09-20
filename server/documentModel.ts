@@ -30,8 +30,25 @@ export interface TextractNormalizedOutput {
   pages: TextractPage[];
 }
 
+/** Check-in symptoms that can be matched against documented warning signs */
+export type SymptomKey = 'breathing' | 'fever' | 'pain_worse';
+
+export type CitationStatus = 'VERIFIED' | 'UNVERIFIED';
+
+/** Evidence fields every extracted item carries back to its source page */
+export interface SourceCitation {
+  source_page: number;
+  source_section?: string;
+  original_extracted_text?: string;
+  // Set by DocumentService.validateAndVerifyVerbatimQuotes, never by the model
+  citation_status?: CitationStatus;
+  confidence?: number;
+  verification_note?: string;
+}
+
 export interface BedrockPatient {
   name: string | null;
+  mrn?: string | null;
   age?: number | null;
   diagnosis?: string | null;
   procedure?: string | null;
@@ -47,52 +64,42 @@ export interface BedrockPatient {
   hospital_helpline?: string | null;
 }
 
-export interface BedrockMedication {
+export interface BedrockMedication extends SourceCitation {
   name: string;
   dose: string;
   frequency: string;
   timing: string;
   instructions: string;
   duration?: string;
-  source_page: number;
-  source_section?: string;
-  original_extracted_text?: string;
 }
 
-export interface BedrockFollowUp {
+export interface BedrockFollowUp extends SourceCitation {
   title: string;
   date: string;
   time: string;
   doctor: string;
   location: string;
-  day_number: number;
+  day_number: number | null;
+  contact_number?: string;
   instructions?: string;
-  source_page: number;
-  source_section?: string;
-  original_extracted_text?: string;
 }
 
-export interface BedrockInstruction {
+export interface BedrockInstruction extends SourceCitation {
   title: string;
   category: 'activity' | 'diet' | 'rest';
   timing?: string;
   duration?: string;
   instructions: string;
   day_range?: string;
-  source_page: number;
-  source_section?: string;
-  original_extracted_text?: string;
 }
 
-export interface BedrockWarningSign {
+export interface BedrockWarningSign extends SourceCitation {
   id?: string;
   condition: string;
-  trigger_key: 'breathing' | 'fever' | 'pain_worse';
+  // Absent when the sign doesn't correspond to a check-in question (e.g. jaundice)
+  trigger_key?: SymptomKey;
   severity: 'urgent' | 'high';
   documented_action: string;
-  source_page: number;
-  source_section?: string;
-  original_extracted_text?: string;
 }
 
 export interface BedrockRecoveryOutput {
