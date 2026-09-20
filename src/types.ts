@@ -1,13 +1,16 @@
 export type TabType = 'home' | 'plan' | 'checkin' | 'more';
 
-export type TaskCategory = 'medication' | 'activity' | 'diet' | 'rest' | 'followup';
+export type CitationStatus = 'VERIFIED' | 'UNVERIFIED';
 
 export interface EvidenceSource {
-  documentId: string;
-  documentName: string;
+  documentName?: string;
   sourcePage: number;
-  section: string;
-  originalText: string;
+  sourceSection?: string;
+  section?: string;
+  originalText?: string;
+  citationStatus?: CitationStatus;
+  confidence?: number;
+  verificationNote?: string;
 }
 
 export interface MedicationTask {
@@ -15,46 +18,72 @@ export interface MedicationTask {
   name: string;
   dose: string;
   frequency: string;
-  timing: string; // e.g. "8:00 AM"
   instructions: string;
+  timeSlot: 'morning' | 'afternoon' | 'evening' | 'night' | 'as_needed';
+  timeLabel?: string;
+  timing?: string;
   completed: boolean;
-  pillColor?: string;
-  pillShape?: 'capsule' | 'round' | 'oval' | 'square';
   evidence: EvidenceSource;
+  duration?: string;
 }
 
 export interface ActivityTask {
   id: string;
   title: string;
-  timing: string;
-  duration?: string;
-  instructions: string;
-  completed: boolean;
   category: 'activity' | 'diet' | 'rest';
+  instructions: string;
+  timeSlot: 'morning' | 'afternoon' | 'evening' | 'night' | 'all_day';
+  timeLabel?: string;
+  timing?: string;
+  completed: boolean;
   evidence: EvidenceSource;
+  duration?: string;
 }
 
 export interface FollowUpAppointment {
-  id: string;
+  id?: string;
   title: string;
   date: string;
   time: string;
   doctor: string;
   location: string;
-  contactNumber: string;
-  notes: string;
-  dayNumber: number;
-  evidence: EvidenceSource;
+  dayNumber?: number | null;
+  contactNumber?: string;
+  instructions?: string;
+  notes?: string;
+  evidence?: EvidenceSource;
 }
 
 export interface WarningSign {
   id: string;
   condition: string;
-  triggerKey: 'breathing' | 'fever' | 'pain_worse';
-  severity: 'urgent' | 'high';
   documentedAction: string;
   sourcePage: number;
-  evidence: EvidenceSource;
+  severity: 'urgent' | 'high';
+  triggerKey?: 'breathing' | 'fever' | 'pain_worse';
+  evidence?: EvidenceSource;
+}
+
+export interface PatientProfile {
+  id?: string;
+  name: string;
+  mrn?: string;
+  age?: number | string | null;
+  diagnosis: string;
+  procedure: string;
+  dischargeDate: string;
+  currentDay: number;
+  totalDays: number;
+  hospitalName: string;
+  attendingPhysician: string;
+  caregiverName?: string;
+  emergencyContact?: {
+    name?: string;
+    relationship?: string;
+    phone?: string;
+  };
+  hospitalHelpline?: string;
+  isDemo?: boolean;
 }
 
 export interface DailyPlan {
@@ -63,30 +92,18 @@ export interface DailyPlan {
   isToday: boolean;
   isPast: boolean;
   milestoneTitle?: string;
-  medications: MedicationTask[];
-  activities: ActivityTask[];
+  milestoneDescription?: string;
+  medications?: MedicationTask[];
+  activities?: ActivityTask[];
   notes?: string;
-}
-
-export interface PatientProfile {
-  id: string;
-  name: string;
-  age: number;
-  diagnosis: string;
-  procedure: string;
-  dischargeDate: string;
-  currentDay: number;
-  totalDays: number;
-  hospitalName: string;
-  attendingPhysician: string;
-  caregiverName: string;
-  emergencyContact: {
-    name: string;
-    relationship: string;
-    phone: string;
-  };
-  hospitalHelpline: string;
-  isDemo?: boolean;
+  tasks?: Array<{
+    id: string;
+    title: string;
+    type: 'medication' | 'activity' | 'appointment';
+    timeSlot: string;
+    completed: boolean;
+    evidence?: EvidenceSource;
+  }>;
 }
 
 export type PainLevel = 'better' | 'same' | 'worse';
@@ -95,22 +112,32 @@ export type BreathingStatus = 'normal' | 'difficult';
 
 export interface CheckInRecord {
   id: string;
-  timestamp: string;
   dayNumber: number;
+  timestamp: string;
   pain: PainLevel;
   fever: FeverStatus;
   breathing: BreathingStatus;
   notes?: string;
-  warningMatched: boolean;
-  matchedWarningSign?: WarningSign;
+  warningMatched?: boolean;
+  matchedWarning?: WarningSign | null;
+  matchedWarningSign?: WarningSign | null;
+  unmatchedSymptoms?: boolean;
+  alertDispatched?: boolean;
+  documentId?: string;
+  snsNotification?: {
+    published: boolean;
+    messageId?: string;
+    topicArn?: string;
+    detail: string;
+  };
 }
 
 export interface DocumentPage {
   pageNumber: number;
   title: string;
   content: string;
-  highlights: {
+  highlights: Array<{
     text: string;
-    type: 'medication' | 'activity' | 'warning' | 'followup';
-  }[];
+    section?: string;
+  }>;
 }
