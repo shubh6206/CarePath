@@ -77,7 +77,7 @@ CarePath is an evidence-grounded post-operative recovery companion that transfor
 
 ---
 
-## D. Files Created
+## D. Files Createdn 
 - `docker-compose.yml`: Defines LocalStack container with `s3`, `dynamodb`, and `sns` on port 4566.
 - `scripts/init-localstack.sh`: Container initialization script to provision S3 bucket, DynamoDB tables, and SNS topic on startup.
 - `.env.local`: Local environment configuration with dummy credentials and localhost endpoints.
